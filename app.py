@@ -9,7 +9,7 @@ import fitz
 import pandas as pd
 import numpy as np
 import streamlit as st
-from PIL import Image
+from PIL import Image, ImageEnhance, ImageFilter, ImageOps
 
 st.set_page_config(page_title="Распознавание паспортов РФ", page_icon="🪪", layout="wide")
 
@@ -38,13 +38,33 @@ def uploaded_to_images(uploaded):
         return pages
     return [Image.open(io.BytesIO(raw)).convert("RGB")]
 
+
+def preprocess_for_ocr(image):
+    # Паспортные сканы часто мелкие и малоконтрастные. Увеличиваем изображение
+    # и повышаем контраст перед передачей в OCR.
+    image = image.convert("RGB")
+    scale = max(2, min(4, 1800 // max(image.size)))
+    image = image.resize((image.width * scale, image.height * scale), Image.Resampling.LANCZOS)
+    image = ImageOps.grayscale(image)
+    image = ImageOps.autocontrast(image)
+    image = ImageEnhance.Contrast(image).enhance(1.35)
+    image = image.filter(ImageFilter.SHARPEN)
+    return image.convert("RGB")
+
+
 def ocr_document(images, reader):
     all_lines = []
     for image in images:
-        # EasyOCR принимает путь, bytes или NumPy-массив, но не объект PIL.Image.
-        image_array = np.array(image.convert("RGB"))
-        lines = reader.readtext(image_array, detail=0, paragraph=False)
-        all_lines.extend(str(x).strip() for x in lines if str(x).strip())
+        prepared = preprocess_for_ocr(image)
+        image_array = np.array(prepared)
+        # detail=1 сохраняет распознанные фрагменты и confidence;
+        # для таблицы используем текст, но низкое качество можно диагностировать.
+        results = reader.readtext(image_array, detail=1, paragraph=False)
+        for item in results:
+            if len(item) >= 3:
+                text = str(item[1]).strip()
+                if text:
+                    all_lines.append(text)
     return all_lines
 
 def norm(s):
@@ -160,6 +180,32 @@ def parse_foreign(lines):
             result["Пол"] = "Женский"
     return result
 
+
+def extract_mrz_names(lines):
+    # Российские внутренние паспорта могут содержать две строки MRZ,
+    # начинающиеся с PNRUS. Это вспомогательный способ, не гарантирующий
+    # восстановление всех полей при плохом качестве изображения.
+    joined = " ".join(re.sub(r"[^A-Z0-9<]", "", x.upper()) for x in lines)
+    match = re.search(r"PNRUS([A-Z<]{3,})", joined)
+    if not match:
+        return None, None, None
+    name_part = match.group(1).split("<<", 1)
+    surname = name_part[0].replace("<", " ").strip() if name_part else None
+    given = name_part[1].strip("<").replace("<", " ") if len(name_part) > 1 else ""
+    parts = given.split()
+    return surname or None, (parts[0] if parts else None), (" ".join(parts[1:]) if len(parts) > 1 else None)
+
+
+def extract_unlabeled_dates(lines):
+    dates = []
+    for line in lines:
+        for m in re.finditer(r"(?<!\d)(\d{2}\.\d{2}\.\d{4})(?!\d)", line):
+            value = normalize_date(m.group(1))
+            if value not in dates:
+                dates.append(value)
+    return dates
+
+
 def parse_domestic(lines):
     result = {
         "Фамилия": find_labeled_value(lines, [r"фамилия"]),
@@ -180,6 +226,33 @@ def parse_domestic(lines):
     }
 
     joined = "\n".join(lines)
+
+    # Fallback: ФИО может быть распознано из машиночитаемой строки,
+    # даже если OCR не увидел печатные подписи полей.
+    mrz_surname, mrz_name, mrz_patronymic = extract_mrz_names(lines)
+    result["Фамилия"] = result["Фамилия"] or mrz_surname
+    result["Имя"] = result["Имя"] or mrz_name
+    result["Отчество"] = result["Отчество"] or mrz_patronymic
+
+    # Дополнительный поиск пола в строках OCR.
+    if not result["Пол"]:
+        for line in lines:
+            low = line.lower()
+            if re.search(r"\bмуж\b|\bмужской\b", low):
+                result["Пол"] = "Мужской"
+                break
+            if re.search(r"\bжен\b|\bженский\b", low):
+                result["Пол"] = "Женский"
+                break
+
+    # Если подписи дат не распознаны, берём найденные даты по порядку
+    # только как подсказку для ручной проверки, не как подтверждённые значения.
+    found_dates = extract_unlabeled_dates(lines)
+    if not result["Дата выдачи"] and found_dates:
+        result["Дата выдачи"] = found_dates[0] + " (проверьте)"
+    if not result["Дата рождения"] and len(found_dates) > 1:
+        result["Дата рождения"] = found_dates[1] + " (проверьте)"
+
     # Common printed internal passport format: 4-digit series + 6-digit number.
     serial_match = re.search(r"(?<!\d)(\d{2})\s?(\d{2})\s+(\d{6})(?!\d)", joined)
     if serial_match:
