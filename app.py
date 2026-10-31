@@ -13,84 +13,125 @@ from PIL import Image, ImageEnhance, ImageFilter, ImageOps
 st.set_page_config(page_title="Распознавание паспортов РФ", page_icon="🪪", layout="wide")
 
 # Визуальное оформление.
-# Цвета компонентов (фон, текст, поля, загрузчик, кнопки и expander)
-# полностью берутся из активной темы Streamlit. Это исключает конфликт
-# между выбранной в меню темой и CSS приложения.
+# Основные цвета привязаны к атрибуту темы, который переключает само меню Streamlit.
 st.markdown("""
 <style>
     .block-container { max-width:1450px; padding-top:2rem; padding-bottom:3rem; }
 
-    /* Шапка использует переменные активной темы Streamlit:
-       в Light primaryColor розовый, в Dark — фиолетовый. */
-    .app-hero {
-        position:relative;
-        overflow:hidden;
-        padding:1.7rem 1.9rem;
-        border-radius:20px;
-        margin:0 0 1.35rem;
-        background:linear-gradient(
-            120deg,
-            color-mix(in srgb, var(--primary-color) 82%, #39243f) 0%,
-            var(--primary-color) 58%,
-            color-mix(in srgb, var(--primary-color) 68%, var(--background-color)) 100%
-        );
-        border:1px solid color-mix(in srgb, var(--primary-color) 55%, var(--background-color));
-        box-shadow:0 10px 26px color-mix(in srgb, var(--text-color) 14%, transparent);
-        color:#fff !important;
+    /* Светлая тема: розово-кремовая палитра. */
+    html[data-theme="light"] .stApp,
+    html[data-theme="light"] [data-testid="stAppViewContainer"] {
+        background:#fffaf6 !important;
+        color:#49363d !important;
     }
-    .app-hero * { color:#fff !important; }
-    .app-hero .eyebrow {
-        font-size:.78rem;
-        font-weight:700;
-        letter-spacing:.12em;
-        text-transform:uppercase;
-        margin-bottom:.45rem;
-        color:rgba(255,255,255,.88) !important;
+    html[data-theme="light"] [data-testid="stHeader"] { background:rgba(255,250,246,.92) !important; }
+    html[data-theme="light"] .stApp,
+    html[data-theme="light"] .stApp p,
+    html[data-theme="light"] .stApp label,
+    html[data-theme="light"] .stApp span,
+    html[data-theme="light"] .stApp [data-testid="stMarkdownContainer"] {
+        color:#49363d;
     }
-    .app-hero h1 {
-        font-size:clamp(1.65rem,3vw,2.35rem);
-        line-height:1.18;
-        margin:0 0 .55rem;
-        font-weight:750;
+    html[data-theme="light"] [data-testid="stFileUploaderDropzone"],
+    html[data-theme="light"] [data-testid="stExpander"] {
+        background:#f8eef0 !important;
+        border-color:#e4c4cc !important;
     }
-    .app-hero p { margin:0; font-size:1rem; color:rgba(255,255,255,.94) !important; }
-    .app-hero:after {
-        content:"✦  ·  ✧  ·  ✦  ·  ⋆  ·  ✧  ·  ✦";
-        position:absolute;
-        right:1.2rem;
-        top:.75rem;
-        color:rgba(255,255,255,.82);
-        font-size:1.15rem;
-        letter-spacing:.3rem;
-        pointer-events:none;
+    html[data-theme="light"] [data-testid="stAlert"] {
+        background:#f8eef0 !important;
+        border:1px solid #e4c4cc !important;
+        color:#49363d !important;
     }
 
-    /* Не задаём собственные цвета виджетам: их оформляет выбранная тема. */
+    /* Тёмная тема: глубокий фиолетовый фон и звёздное оформление. */
+    html[data-theme="dark"] .stApp,
+    html[data-theme="dark"] [data-testid="stAppViewContainer"] {
+        background:#100d1d !important;
+        color:#eee9ff !important;
+    }
+    html[data-theme="dark"] [data-testid="stHeader"] { background:rgba(16,13,29,.92) !important; }
+    html[data-theme="dark"] .stApp,
+    html[data-theme="dark"] .stApp p,
+    html[data-theme="dark"] .stApp label,
+    html[data-theme="dark"] .stApp span,
+    html[data-theme="dark"] .stApp [data-testid="stMarkdownContainer"] {
+        color:#eee9ff;
+    }
+    html[data-theme="dark"] [data-testid="stFileUploaderDropzone"],
+    html[data-theme="dark"] [data-testid="stExpander"] {
+        background:#211638 !important;
+        border-color:#493967 !important;
+    }
+    html[data-theme="dark"] [data-testid="stAlert"] {
+        background:#302344 !important;
+        border:1px solid #594477 !important;
+        color:#eee9ff !important;
+    }
+    html[data-theme="dark"] [data-testid="stAppViewContainer"] {
+        background-image:
+            radial-gradient(circle at 12% 18%, rgba(255,255,255,.95) 0 1px, transparent 1.8px),
+            radial-gradient(circle at 77% 11%, rgba(255,255,255,.8) 0 1px, transparent 1.8px),
+            radial-gradient(circle at 89% 68%, rgba(255,255,255,.85) 0 1px, transparent 1.8px),
+            radial-gradient(circle at 25% 82%, rgba(255,255,255,.8) 0 1px, transparent 1.8px),
+            radial-gradient(circle at 56% 55%, rgba(255,255,255,.75) 0 1px, transparent 1.8px) !important;
+        background-size: 430px 330px, 510px 390px, 570px 420px, 490px 370px, 610px 460px !important;
+        background-repeat:repeat !important;
+    }
+
+    /* Шапка — отдельный контейнер Streamlit, чтобы заголовок не исчезал
+       из-за обработки HTML-разметки Markdown. */
+    .st-key-app_hero {
+        position:relative;
+        overflow:hidden;
+        padding:1.7rem 1.9rem 1.6rem;
+        border-radius:20px;
+        margin:0 0 1.35rem;
+        background:linear-gradient(120deg,#b96f89 0%,#d49aaa 58%,#eed0d4 100%);
+        border:1px solid #d8a8b7;
+        box-shadow:0 10px 26px rgba(92,48,67,.16);
+    }
+    .st-key-app_hero h1, .st-key-app_hero p, .st-key-app_hero [data-testid="stMarkdownContainer"] {
+        color:#fff !important;
+    }
+    .st-key-app_hero h1 {
+        font-size:clamp(1.65rem,3vw,2.35rem);
+        line-height:1.18;
+        margin:.15rem 0 .55rem;
+        font-weight:750;
+    }
+    .st-key-app_hero p { margin:0; font-size:1rem; }
+    .st-key-app_hero:after {
+        content:"✦  ·  ✧  ·  ✦  ·  ⋆  ·  ✧  ·  ✦";
+        position:absolute; right:1.2rem; top:.75rem;
+        color:rgba(255,255,255,.9); font-size:1.15rem;
+        letter-spacing:.3rem; pointer-events:none;
+    }
+    html[data-theme="dark"] .st-key-app_hero {
+        background:linear-gradient(120deg,#30204f 0%,#60458e 58%,#8665b4 100%);
+        border-color:#7656a6;
+        box-shadow:0 10px 28px rgba(0,0,0,.35);
+    }
+
     .stButton>button,.stDownloadButton>button {
-        border-radius:11px;
-        padding:.62rem 1.15rem;
-        font-weight:700;
-        transition:all .15s ease;
+        border-radius:11px; padding:.62rem 1.15rem;
+        font-weight:700; transition:all .15s ease;
     }
     .stButton>button:hover,.stDownloadButton>button:hover { transform:translateY(-1px); }
     div[data-testid="stDataFrame"],div[data-testid="stDataEditor"] {
-        border-radius:12px;
-        padding:.35rem;
+        border-radius:12px; padding:.35rem;
     }
-    hr { border-color:color-mix(in srgb, var(--text-color) 18%, transparent); }
-
     @media(max-width:700px) {
         .block-container { padding:1rem .8rem 2rem; }
-        .app-hero { padding:1.25rem; border-radius:15px; }
-        .app-hero:after { right:.6rem; letter-spacing:.15rem; font-size:.95rem; }
+        .st-key-app_hero { padding:1.25rem; border-radius:15px; }
+        .st-key-app_hero:after { right:.6rem; letter-spacing:.15rem; font-size:.95rem; }
     }
 </style>
-<div class="app-hero">
-  <div class="eyebrow">Документы · распознавание данных</div>
-  <h1>Распознавание паспортов граждан РФ</h1>
-  <p>Загрузите скан или фотографию паспорта, проверьте извлечённые сведения и сохраните результат в Excel.</p>
-</div>
 """, unsafe_allow_html=True)
+
+with st.container(key="app_hero"):
+    st.markdown("### Документы · распознавание данных")
+    st.markdown("# Распознавание паспортов граждан РФ")
+    st.markdown("Загрузите скан или фотографию паспорта, проверьте извлечённые сведения и сохраните результат в Excel.")
 
 st.warning(
     "Учебный прототип. OCR может ошибаться и не подтверждает подлинность документа. "
