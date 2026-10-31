@@ -13,105 +13,128 @@ from PIL import Image, ImageEnhance, ImageFilter, ImageOps
 st.set_page_config(page_title="Распознавание паспортов РФ", page_icon="🪪", layout="wide")
 
 # Визуальное оформление.
-# Streamlit перезапускает скрипт при выборе темы в меню; определяем её на Python-стороне,
-# чтобы не зависеть от CSS-селекторов data-theme, которые различаются между версиями.
-try:
-    active_theme = st.context.theme.type
-except Exception:
-    active_theme = "light"
-
-is_dark = active_theme == "dark"
-
-base_css = """
+# Используем st.html для подключения CSS: так браузер не выводит фрагменты
+# стилей как обычный текст. Цвета берутся из активной темы Streamlit.
+app_css = """
 <style>
-    .block-container { max-width:1450px; padding-top:2rem; padding-bottom:3rem; }
-    .st-key-app_hero {
-        position:relative; overflow:hidden;
-        padding:1.7rem 1.9rem 1.6rem; border-radius:20px;
-        margin:0 0 1.35rem;
+    .block-container {
+        max-width:1450px;
+        padding-top:2rem;
+        padding-bottom:3rem;
     }
-    .st-key-app_hero h1, .st-key-app_hero p,
-    .st-key-app_hero [data-testid="stMarkdownContainer"] { color:#fff !important; }
-    .st-key-app_hero h1 {
-        font-size:clamp(1.65rem,3vw,2.35rem); line-height:1.18;
-        margin:.15rem 0 .55rem; font-weight:750;
-    }
-    .st-key-app_hero p { margin:0; font-size:1rem; }
-    .st-key-app_hero:after {
-        content:"✦  ·  ✧  ·  ✦  ·  ⋆  ·  ✧  ·  ✦";
-        position:absolute; right:1.2rem; top:.75rem;
-        color:rgba(255,255,255,.9); font-size:1.15rem;
-        letter-spacing:.3rem; pointer-events:none;
-    }
-    .stButton>button,.stDownloadButton>button {
-        border-radius:11px; padding:.62rem 1.15rem;
-        font-weight:700; transition:all .15s ease;
-    }
-    .stButton>button:hover,.stDownloadButton>button:hover { transform:translateY(-1px); }
-    div[data-testid="stDataFrame"],div[data-testid="stDataEditor"] {
-        border-radius:12px; padding:.35rem;
-    }
-    @media(max-width:700px) {
-        .block-container { padding:1rem .8rem 2rem; }
-        .st-key-app_hero { padding:1.25rem; border-radius:15px; }
-        .st-key-app_hero:after { right:.6rem; letter-spacing:.15rem; font-size:.95rem; }
-    }
-</style>
-"""
 
-if is_dark:
-    theme_css = """
-    <style>
-      /* Фиолетовая тёмная тема */
-      .stApp, [data-testid="stAppViewContainer"] {
-        background-color:#100d1d !important;
+    /* Общий фон: цвет задаётся выбранной темой Streamlit.
+       Точки очень малоконтрастные в светлой теме и заметные в тёмной. */
+    .stApp,
+    [data-testid="stAppViewContainer"] {
+        background-color:var(--background-color) !important;
         background-image:
-          radial-gradient(circle, rgba(255,255,255,.92) 0 1px, transparent 1.7px),
-          radial-gradient(circle, rgba(205,185,255,.82) 0 1.2px, transparent 2px),
-          radial-gradient(circle, rgba(255,255,255,.72) 0 .8px, transparent 1.6px),
-          radial-gradient(circle, rgba(190,165,255,.72) 0 1px, transparent 1.8px) !important;
+            radial-gradient(circle, rgba(255,255,255,.72) 0 1px, transparent 1.6px),
+            radial-gradient(circle, rgba(210,190,255,.58) 0 1.1px, transparent 1.8px),
+            radial-gradient(circle, rgba(255,255,255,.48) 0 .8px, transparent 1.5px),
+            radial-gradient(circle, rgba(190,165,255,.48) 0 1px, transparent 1.8px) !important;
         background-size:173px 151px, 257px 223px, 311px 277px, 397px 337px !important;
         background-position:13px 21px, 71px 43px, 127px 89px, 31px 157px !important;
         background-repeat:repeat !important;
         background-attachment:fixed !important;
-      }
-      [data-testid="stHeader"] { background:rgba(16,13,29,.88) !important; }
-      .st-key-app_hero {
-        background:linear-gradient(120deg,#30204f 0%,#513779 52%,#7654a5 100%) !important;
-        border:1px solid #7656a6;
-        box-shadow:0 10px 30px rgba(0,0,0,.38);
-      }
-      [data-testid="stFileUploaderDropzone"], [data-testid="stExpander"] {
-        background:#211638 !important; border-color:#493967 !important;
-      }
-      [data-testid="stAlert"] {
-        background:#302344 !important; border:1px solid #594477 !important;
-      }
-    </style>
-    """
-else:
-    theme_css = """
-    <style>
-      /* Розово-кремовая светлая тема */
-      .stApp, [data-testid="stAppViewContainer"] {
-        background-color:#fffaf6 !important;
-      }
-      [data-testid="stHeader"] { background:rgba(255,250,246,.92) !important; }
-      .st-key-app_hero {
-        background:linear-gradient(120deg,#b96f89 0%,#d49aaa 58%,#eed0d4 100%) !important;
-        border:1px solid #d8a8b7;
-        box-shadow:0 10px 26px rgba(92,48,67,.16);
-      }
-      [data-testid="stFileUploaderDropzone"], [data-testid="stExpander"] {
-        background:#f8eef0 !important; border-color:#e4c4cc !important;
-      }
-      [data-testid="stAlert"] {
-        background:#f8eef0 !important; border:1px solid #e4c4cc !important;
-      }
-    </style>
-    """
+    }
 
-st.markdown(base_css + theme_css, unsafe_allow_html=True)
+    [data-testid="stHeader"] {
+        background:transparent !important;
+    }
+
+    /* Основной блок использует primaryColor активной темы:
+       розовый в Light и фиолетовый в Dark согласно config.toml. */
+    .st-key-app_hero {
+        position:relative;
+        overflow:hidden;
+        padding:1.7rem 1.9rem 1.6rem;
+        border-radius:20px;
+        margin:0 0 1.35rem;
+        background:linear-gradient(
+            120deg,
+            var(--primary-color) 0%,
+            color-mix(in srgb, var(--primary-color) 78%, var(--secondary-background-color)) 58%,
+            color-mix(in srgb, var(--primary-color) 55%, var(--background-color)) 100%
+        ) !important;
+        border:1px solid var(--primary-color);
+        box-shadow:0 10px 28px rgba(0,0,0,.18);
+    }
+
+    .st-key-app_hero h1,
+    .st-key-app_hero p,
+    .st-key-app_hero [data-testid="stMarkdownContainer"] {
+        color:#fff !important;
+    }
+
+    .st-key-app_hero h1 {
+        font-size:clamp(1.65rem,3vw,2.35rem);
+        line-height:1.18;
+        margin:.15rem 0 .55rem;
+        font-weight:750;
+    }
+
+    .st-key-app_hero p {
+        margin:0;
+        font-size:1rem;
+    }
+
+    .st-key-app_hero:after {
+        content:"✦  ·  ✧  ·  ✦  ·  ⋆  ·  ✧  ·  ✦";
+        position:absolute;
+        right:1.2rem;
+        top:.75rem;
+        color:rgba(255,255,255,.92);
+        font-size:1.15rem;
+        letter-spacing:.3rem;
+        pointer-events:none;
+    }
+
+    [data-testid="stFileUploaderDropzone"],
+    [data-testid="stExpander"] {
+        background:var(--secondary-background-color) !important;
+        border-color:var(--border-color) !important;
+        border-radius:12px;
+    }
+
+    [data-testid="stAlert"] {
+        background:var(--secondary-background-color) !important;
+        border:1px solid var(--border-color) !important;
+        border-radius:12px;
+    }
+
+    .stButton>button,
+    .stDownloadButton>button {
+        border-radius:11px;
+        padding:.62rem 1.15rem;
+        font-weight:700;
+        transition:all .15s ease;
+    }
+
+    .stButton>button:hover,
+    .stDownloadButton>button:hover {
+        transform:translateY(-1px);
+    }
+
+    div[data-testid="stDataFrame"],
+    div[data-testid="stDataEditor"] {
+        border-radius:12px;
+        padding:.35rem;
+    }
+
+    @media(max-width:700px) {
+        .block-container { padding:1rem .8rem 2rem; }
+        .st-key-app_hero { padding:1.25rem; border-radius:15px; }
+        .st-key-app_hero:after {
+            right:.6rem;
+            letter-spacing:.15rem;
+            font-size:.95rem;
+        }
+    }
+</style>
+"""
+
+st.html(app_css)
 
 with st.container(key="app_hero"):
     st.markdown("### Документы · распознавание данных")
