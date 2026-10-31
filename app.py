@@ -12,122 +12,78 @@ from PIL import Image, ImageEnhance, ImageFilter, ImageOps
 
 st.set_page_config(page_title="Распознавание паспортов РФ", page_icon="🪪", layout="wide")
 
-# Визуальное оформление. Основные цвета Light/Dark задаются в .streamlit/config.toml,
-# чтобы встроенное меню Streamlit действительно переключало всю страницу.
-# Здесь оставлены только декоративные элементы, которые не переопределяют фон приложения.
-try:
-    active_theme = st.context.theme.type
-except Exception:
-    active_theme = "light"
+# Визуальное оформление.
+# Цвета компонентов (фон, текст, поля, загрузчик, кнопки и expander)
+# полностью берутся из активной темы Streamlit. Это исключает конфликт
+# между выбранной в меню темой и CSS приложения.
+st.markdown("""
+<style>
+    .block-container { max-width:1450px; padding-top:2rem; padding-bottom:3rem; }
 
-if active_theme == "dark":
-    theme_css = """
+    /* Шапка использует переменные активной темы Streamlit:
+       в Light primaryColor розовый, в Dark — фиолетовый. */
     .app-hero {
-        background:linear-gradient(120deg,#30224e 0%,#4f367e 58%,#6f4e9f 100%) !important;
-        border:1px solid rgba(194,170,255,.38);
-        box-shadow:0 14px 38px rgba(5,3,15,.4),0 0 28px rgba(151,117,232,.2);
+        position:relative;
+        overflow:hidden;
+        padding:1.7rem 1.9rem;
+        border-radius:20px;
+        margin:0 0 1.35rem;
+        background:linear-gradient(
+            120deg,
+            color-mix(in srgb, var(--primary-color) 82%, #39243f) 0%,
+            var(--primary-color) 58%,
+            color-mix(in srgb, var(--primary-color) 68%, var(--background-color)) 100%
+        );
+        border:1px solid color-mix(in srgb, var(--primary-color) 55%, var(--background-color));
+        box-shadow:0 10px 26px color-mix(in srgb, var(--text-color) 14%, transparent);
         color:#fff !important;
     }
     .app-hero * { color:#fff !important; }
-    .app-hero .eyebrow { color:#d9caff !important; }
-    .app-hero p { color:#e8defe !important; }
+    .app-hero .eyebrow {
+        font-size:.78rem;
+        font-weight:700;
+        letter-spacing:.12em;
+        text-transform:uppercase;
+        margin-bottom:.45rem;
+        color:rgba(255,255,255,.88) !important;
+    }
+    .app-hero h1 {
+        font-size:clamp(1.65rem,3vw,2.35rem);
+        line-height:1.18;
+        margin:0 0 .55rem;
+        font-weight:750;
+    }
+    .app-hero p { margin:0; font-size:1rem; color:rgba(255,255,255,.94) !important; }
     .app-hero:after {
-        content:"✦  ·  ✧  ·  ✦  ·  ⋆  ·  ✧  ·  ✦  ·  ⋆  ·  ✧  ·  ✦";
-        position:absolute; right:1rem; top:.75rem;
-        color:rgba(245,237,255,.95); font-size:1.25rem;
-        letter-spacing:.3rem; pointer-events:none;
+        content:"✦  ·  ✧  ·  ✦  ·  ⋆  ·  ✧  ·  ✦";
+        position:absolute;
+        right:1.2rem;
+        top:.75rem;
+        color:rgba(255,255,255,.82);
+        font-size:1.15rem;
+        letter-spacing:.3rem;
+        pointer-events:none;
     }
-    div[data-testid="stAlert"] {
-        background:rgba(52,39,76,.97) !important;
-        border:1px solid #745b9d !important;
-        border-radius:12px; color:#f0eaff !important;
-    }
-    div[data-testid="stAlert"] * { color:#f0eaff !important; }
-    div[data-testid="stFileUploader"] section {
-        background:rgba(35,27,54,.97) !important;
-        border:1.5px dashed #8068b2 !important; border-radius:14px;
-    }
-    div[data-testid="stFileUploader"] section * { color:#eee9ff !important; }
-    .stButton>button[kind="primary"] {
-        background:linear-gradient(120deg,#8b6bd1,#a184ee) !important;
-        color:#fff !important; border:1px solid #b69aff !important;
-    }
-    .stButton>button[kind="primary"] * { color:#fff !important; }
-    .stDownloadButton>button {
-        background:#302448 !important; color:#eee6ff !important;
-        border:1px solid #69558f !important;
-    }
-    .stDownloadButton>button * { color:#eee6ff !important; }
-    div[data-testid="stExpander"] {
-        background:rgba(32,25,49,.97) !important;
-        border:1px solid #493967 !important; border-radius:12px;
-    }
-    div[data-testid="stExpander"] summary * { color:#eee9ff !important; }
-    input,textarea,[data-baseweb="select"]>div {
-        background:#2b2144 !important; color:#f3edff !important;
-        border-color:#66528b !important;
-    }
-    """
-else:
-    theme_css = """
-    .app-hero {
-        background:linear-gradient(120deg,#9f5d75 0%,#bd7b8e 55%,#d6a2a8 100%) !important;
-        border:1px solid #e4c4cc; box-shadow:0 10px 26px rgba(135,76,96,.15);
-        color:#fffaf6 !important;
-    }
-    .app-hero * { color:#fffaf6 !important; }
-    .app-hero .eyebrow { color:#fbecef !important; }
-    .app-hero p { color:#fff5f1 !important; }
-    .app-hero:after {
-        content:"✦  ·  ✧  ·  ✦";
-        position:absolute; right:1.5rem; top:.9rem;
-        color:rgba(255,245,248,.85); font-size:1.1rem;
-        letter-spacing:.4rem; pointer-events:none;
-    }
-    div[data-testid="stAlert"] {
-        border-radius:12px; border:1px solid #e8c9cf;
-        background:#fff1ed !important; color:#68464f !important;
-    }
-    div[data-testid="stAlert"] * { color:#68464f !important; }
-    div[data-testid="stFileUploader"] section {
-        background:#fffdfb !important; border:1.5px dashed #d6aab5 !important;
-        border-radius:14px;
-    }
-    div[data-testid="stFileUploader"] section * { color:#59434a !important; }
-    .stButton>button[kind="primary"] {
-        background:#ad687f !important; color:#fffaf6 !important;
-        border:1px solid #ad687f !important;
-    }
-    .stButton>button[kind="primary"] * { color:#fffaf6 !important; }
-    .stDownloadButton>button {
-        background:#f4e4e6 !important; color:#684653 !important;
-        border:1px solid #e4c6ce !important;
-    }
-    .stDownloadButton>button * { color:#684653 !important; }
-    div[data-testid="stExpander"] {
-        background:#fffdfb !important; border:1px solid #ead9dc !important;
-        border-radius:12px;
-    }
-    div[data-testid="stExpander"] summary * { color:#593d47 !important; }
-    """
 
-st.markdown(f"""
-<style>
-    .block-container {{ max-width:1450px; padding-top:2rem; padding-bottom:3rem; }}
-    .app-hero {{ position:relative; overflow:hidden; padding:1.7rem 1.9rem; border-radius:20px; margin:0 0 1.35rem; }}
-    .app-hero .eyebrow {{ font-size:.78rem; font-weight:700; letter-spacing:.12em; text-transform:uppercase; margin-bottom:.45rem; }}
-    .app-hero h1 {{ font-size:clamp(1.65rem,3vw,2.35rem); line-height:1.18; margin:0 0 .55rem; font-weight:750; }}
-    .app-hero p {{ margin:0; font-size:1rem; }}
-    .stButton>button,.stDownloadButton>button {{ border-radius:11px; padding:.62rem 1.15rem; font-weight:700; transition:all .15s ease; }}
-    .stButton>button:hover,.stDownloadButton>button:hover {{ transform:translateY(-1px); }}
-    div[data-testid="stDataFrame"],div[data-testid="stDataEditor"] {{ border-radius:12px; padding:.35rem; }}
-    hr {{ border-color:rgba(150,130,180,.25); }}
-    @media(max-width:700px) {{
-        .block-container {{ padding:1rem .8rem 2rem; }}
-        .app-hero {{ padding:1.25rem; border-radius:15px; }}
-        .app-hero:after {{ right:.6rem; letter-spacing:.15rem; font-size:.95rem; }}
-    }}
-    {theme_css}
+    /* Не задаём собственные цвета виджетам: их оформляет выбранная тема. */
+    .stButton>button,.stDownloadButton>button {
+        border-radius:11px;
+        padding:.62rem 1.15rem;
+        font-weight:700;
+        transition:all .15s ease;
+    }
+    .stButton>button:hover,.stDownloadButton>button:hover { transform:translateY(-1px); }
+    div[data-testid="stDataFrame"],div[data-testid="stDataEditor"] {
+        border-radius:12px;
+        padding:.35rem;
+    }
+    hr { border-color:color-mix(in srgb, var(--text-color) 18%, transparent); }
+
+    @media(max-width:700px) {
+        .block-container { padding:1rem .8rem 2rem; }
+        .app-hero { padding:1.25rem; border-radius:15px; }
+        .app-hero:after { right:.6rem; letter-spacing:.15rem; font-size:.95rem; }
+    }
 </style>
 <div class="app-hero">
   <div class="eyebrow">Документы · распознавание данных</div>
