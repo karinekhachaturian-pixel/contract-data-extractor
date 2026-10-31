@@ -15,32 +15,152 @@ st.set_page_config(page_title="Распознавание паспортов Р�
 # Визуальное оформление интерфейса. Логика распознавания и обработки файлов не меняется.
 st.markdown("""
 <style>
-    :root { --ink:#17243a; --muted:#68758a; --line:#e3e9f1; }
-    .stApp { background:linear-gradient(180deg,#f5f8fc 0%,#eef3f9 100%); color:var(--ink); }
-    [data-testid="stHeader"] { background:rgba(245,248,252,.9); }
-    .block-container { max-width:1450px; padding-top:2rem; padding-bottom:3rem; }
-    .app-hero {
-        background:linear-gradient(120deg,#173b66 0%,#2864a8 58%,#4384bd 100%);
-        padding:1.65rem 1.9rem; border-radius:18px; margin:0 0 1.35rem 0;
-        box-shadow:0 12px 30px rgba(27,67,111,.16); color:#fff;
+    :root {
+        --ink: #49363d;
+        --muted: #806b72;
+        --line: #ead9dc;
+        --cream: #fffaf6;
+        --rose: #f4e4e6;
+        --rose-deep: #a85f78;
     }
-    .app-hero .eyebrow { color:#d9e9fa; font-size:.78rem; font-weight:700; letter-spacing:.12em; text-transform:uppercase; margin-bottom:.45rem; }
-    .app-hero h1 { color:#fff!important; font-size:clamp(1.65rem,3vw,2.35rem); line-height:1.18; margin:0 0 .55rem 0; font-weight:750; }
-    .app-hero p { color:#e8f1fb!important; margin:0; font-size:1rem; }
-    h2 { color:#1b3554!important; font-weight:750!important; letter-spacing:-.02em; }
-    div[data-testid="stAlert"] { border-radius:12px; border:1px solid #f1d89a; background:#fff9e9; }
-    div[data-testid="stRadio"]>label, div[data-testid="stFileUploader"] label { font-weight:700; color:#263a55; }
-    div[data-testid="stFileUploader"] section { background:#fff; border:1.5px dashed #a9bdd5; border-radius:14px; padding:1rem; }
-    div[data-testid="stFileUploader"] section:hover { border-color:#3978b9; background:#f8fbff; }
-    .stButton>button, .stDownloadButton>button { border-radius:10px; padding:.62rem 1.15rem; font-weight:700; transition:all .15s ease; }
-    .stButton>button[kind="primary"] { background:#2864a8; color:white; border:0; box-shadow:0 5px 12px rgba(40,100,168,.18); }
-    .stButton>button[kind="primary"]:hover { background:#1d4f87; transform:translateY(-1px); }
-    .stDownloadButton>button { background:#eaf1f9; color:#214f80; border:1px solid #cbd9e8; }
-    .stDownloadButton>button:hover { background:#dce9f7; border-color:#9fb9d5; }
-    div[data-testid="stExpander"] { background:#fff; border:1px solid var(--line); border-radius:12px; overflow:hidden; }
-    div[data-testid="stDataFrame"], div[data-testid="stDataEditor"] { background:#fff; border:1px solid #e0e7f0; border-radius:12px; padding:.35rem; }
-    hr { border-color:#e2e8f0; }
-    @media(max-width:700px) { .block-container{padding:1rem .8rem 2rem} .app-hero{padding:1.25rem;border-radius:14px} }
+    html, body, [class*="css"] {
+        color: #49363d !important;
+    }
+    .stApp {
+        background: linear-gradient(180deg, #fffaf6 0%, #f8eef0 100%);
+        color: #49363d !important;
+    }
+    [data-testid="stHeader"] {
+        background: rgba(255,250,246,.94);
+    }
+    .block-container {
+        max-width: 1450px;
+        padding-top: 2rem;
+        padding-bottom: 3rem;
+    }
+    /* Основной текст и подписи — тёплый тёмно-коричневый для контраста */
+    p, label, span, div, li, [data-testid="stMarkdownContainer"] {
+        color: #49363d;
+    }
+    h1, h2, h3, h4 {
+        color: #593d47 !important;
+        font-weight: 700 !important;
+    }
+    .app-hero {
+        background: linear-gradient(120deg, #9f5d75 0%, #bd7b8e 55%, #d6a2a8 100%);
+        padding: 1.65rem 1.9rem;
+        border-radius: 18px;
+        margin: 0 0 1.35rem 0;
+        box-shadow: 0 10px 26px rgba(135, 76, 96, .15);
+        color: #fffaf6 !important;
+    }
+    .app-hero * {
+        color: #fffaf6 !important;
+    }
+    .app-hero .eyebrow {
+        color: #fbecef !important;
+        font-size: .78rem;
+        font-weight: 700;
+        letter-spacing: .12em;
+        text-transform: uppercase;
+        margin-bottom: .45rem;
+    }
+    .app-hero h1 {
+        color: #fffaf6 !important;
+        font-size: clamp(1.65rem, 3vw, 2.35rem);
+        line-height: 1.18;
+        margin: 0 0 .55rem 0;
+    }
+    .app-hero p {
+        color: #fff5f1 !important;
+        margin: 0;
+        font-size: 1rem;
+    }
+    div[data-testid="stAlert"] {
+        border-radius: 12px;
+        border: 1px solid #e8c9cf;
+        background: #fff1ed;
+        color: #68464f !important;
+    }
+    div[data-testid="stAlert"] * {
+        color: #68464f !important;
+    }
+    div[data-testid="stRadio"] > label,
+    div[data-testid="stFileUploader"] label {
+        font-weight: 700;
+        color: #593d47 !important;
+    }
+    div[data-testid="stFileUploader"] section {
+        background: #fffdfb;
+        border: 1.5px dashed #d6aab5;
+        border-radius: 14px;
+        padding: 1rem;
+    }
+    div[data-testid="stFileUploader"] section * {
+        color: #59434a !important;
+    }
+    div[data-testid="stFileUploader"] section:hover {
+        border-color: #b87389;
+        background: #fff7f5;
+    }
+    .stButton > button, .stDownloadButton > button {
+        border-radius: 10px;
+        padding: .62rem 1.15rem;
+        font-weight: 700;
+        transition: all .15s ease;
+    }
+    .stButton > button[kind="primary"] {
+        background: #ad687f !important;
+        color: #fffaf6 !important;
+        border: 1px solid #ad687f !important;
+        box-shadow: 0 5px 12px rgba(173,104,127,.16);
+    }
+    .stButton > button[kind="primary"] * {
+        color: #fffaf6 !important;
+    }
+    .stButton > button[kind="primary"]:hover {
+        background: #95546b !important;
+        border-color: #95546b !important;
+        transform: translateY(-1px);
+    }
+    .stDownloadButton > button {
+        background: #f4e4e6 !important;
+        color: #684653 !important;
+        border: 1px solid #e4c6ce !important;
+    }
+    .stDownloadButton > button * {
+        color: #684653 !important;
+    }
+    .stDownloadButton > button:hover {
+        background: #edd6dc !important;
+        border-color: #d7aab6 !important;
+    }
+    div[data-testid="stExpander"] {
+        background: #fffdfb;
+        border: 1px solid #ead9dc;
+        border-radius: 12px;
+        overflow: hidden;
+    }
+    div[data-testid="stExpander"] summary,
+    div[data-testid="stExpander"] summary * {
+        color: #593d47 !important;
+    }
+    div[data-testid="stDataFrame"], div[data-testid="stDataEditor"] {
+        background: #fffdfb;
+        border: 1px solid #ead9dc;
+        border-radius: 12px;
+        padding: .35rem;
+    }
+    [data-testid="stCaptionContainer"], small {
+        color: #806b72 !important;
+    }
+    hr {
+        border-color: #ead9dc;
+    }
+    @media (max-width: 700px) {
+        .block-container { padding: 1rem .8rem 2rem .8rem; }
+        .app-hero { padding: 1.25rem; border-radius: 14px; }
+    }
 </style>
 <div class="app-hero">
   <div class="eyebrow">Документы · распознавание данных</div>
