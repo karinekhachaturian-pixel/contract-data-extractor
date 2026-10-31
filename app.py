@@ -15,81 +15,20 @@ st.set_page_config(page_title="Распознавание паспортов Р�
 # Визуальное оформление интерфейса. Логика распознавания и обработки файлов не меняется.
 st.markdown("""
 <style>
-    :root {
-        --ink: #eee9ff;
-        --muted: #b8afd2;
-        --line: #40345f;
-        --surface: #211a35;
-        --surface-soft: #2b2144;
-        --accent: #a98bfa;
-    }
-    html, body, [class*="css"] {
-        color: #eee9ff !important;
-    }
-    .stApp {
-        background:
-            radial-gradient(circle at 8% 13%, rgba(208,190,255,.78) 0 1px, transparent 1.8px),
-            radial-gradient(circle at 17% 31%, rgba(208,190,255,.55) 0 1px, transparent 1.8px),
-            radial-gradient(circle at 29% 8%, rgba(255,255,255,.72) 0 1px, transparent 1.8px),
-            radial-gradient(circle at 43% 23%, rgba(190,166,255,.55) 0 1px, transparent 1.8px),
-            radial-gradient(circle at 61% 10%, rgba(255,255,255,.68) 0 1px, transparent 1.8px),
-            radial-gradient(circle at 74% 29%, rgba(208,190,255,.58) 0 1px, transparent 1.8px),
-            radial-gradient(circle at 88% 14%, rgba(255,255,255,.72) 0 1px, transparent 1.8px),
-            radial-gradient(circle at 94% 42%, rgba(190,166,255,.5) 0 1px, transparent 1.8px),
-            radial-gradient(circle at 12% 66%, rgba(255,255,255,.48) 0 1px, transparent 1.8px),
-            radial-gradient(circle at 36% 78%, rgba(208,190,255,.45) 0 1px, transparent 1.8px),
-            radial-gradient(circle at 67% 72%, rgba(255,255,255,.45) 0 1px, transparent 1.8px),
-            radial-gradient(circle at 83% 88%, rgba(208,190,255,.48) 0 1px, transparent 1.8px),
-            linear-gradient(145deg, #100d1d 0%, #171127 48%, #211638 100%);
-        background-attachment: fixed;
-        color: #eee9ff !important;
-    }
-    [data-testid="stHeader"] {
-        background: rgba(16,13,29,.88);
-    }
-    [data-testid="stToolbar"] {
-        color: #eee9ff !important;
-    }
+    /* Общая геометрия — не зависит от выбранной темы Streamlit */
     .block-container {
         max-width: 1450px;
         padding-top: 2rem;
         padding-bottom: 3rem;
     }
-    /* Контрастный светлый текст на тёмном фоне */
-    p, label, span, div, li, [data-testid="stMarkdownContainer"],
-    [data-testid="stCaptionContainer"] {
-        color: #eee9ff;
-    }
-    h1, h2, h3, h4 {
-        color: #f4efff !important;
-        font-weight: 700 !important;
-    }
     .app-hero {
         position: relative;
         overflow: hidden;
-        background: linear-gradient(120deg, rgba(48,34,78,.97) 0%, rgba(79,54,126,.96) 58%, rgba(111,78,159,.95) 100%);
         padding: 1.7rem 1.9rem;
-        border: 1px solid rgba(194,170,255,.28);
         border-radius: 20px;
         margin: 0 0 1.35rem 0;
-        box-shadow: 0 14px 38px rgba(5,3,15,.35), 0 0 24px rgba(151,117,232,.12);
-        color: #fff !important;
-    }
-    .app-hero:after {
-        content: "✦      ·          ✧       ·       ✦";
-        position: absolute;
-        right: 1.5rem;
-        top: .9rem;
-        color: rgba(245,237,255,.72);
-        font-size: 1.15rem;
-        letter-spacing: .55rem;
-        pointer-events: none;
-    }
-    .app-hero * {
-        color: #fff !important;
     }
     .app-hero .eyebrow {
-        color: #d9caff !important;
         font-size: .78rem;
         font-weight: 700;
         letter-spacing: .12em;
@@ -97,106 +36,224 @@ st.markdown("""
         margin-bottom: .45rem;
     }
     .app-hero h1 {
-        color: #fff !important;
         font-size: clamp(1.65rem, 3vw, 2.35rem);
         line-height: 1.18;
         margin: 0 0 .55rem 0;
+        font-weight: 750;
     }
-    .app-hero p {
-        color: #e8defe !important;
-        margin: 0;
-        font-size: 1rem;
+    .app-hero p { margin: 0; font-size: 1rem; }
+
+    /* LIGHT: прежняя розово-кремовая палитра */
+    html[data-theme="light"] .stApp,
+    body[data-theme="light"] .stApp,
+    html:not([data-theme]) .stApp {
+        background: linear-gradient(180deg, #fffaf6 0%, #f8eef0 100%) !important;
+        color: #49363d !important;
     }
-    div[data-testid="stAlert"] {
-        border-radius: 12px;
-        border: 1px solid #745b9d;
-        background: rgba(52,39,76,.94);
-        color: #f0eaff !important;
+    html[data-theme="light"] [data-testid="stHeader"],
+    body[data-theme="light"] [data-testid="stHeader"],
+    html:not([data-theme]) [data-testid="stHeader"] {
+        background: rgba(255,250,246,.94) !important;
     }
-    div[data-testid="stAlert"] * {
-        color: #f0eaff !important;
+    html[data-theme="light"] .stApp p,
+    html[data-theme="light"] .stApp label,
+    html[data-theme="light"] .stApp li,
+    html[data-theme="light"] .stApp [data-testid="stMarkdownContainer"],
+    html:not([data-theme]) .stApp p,
+    html:not([data-theme]) .stApp label,
+    html:not([data-theme]) .stApp li,
+    html:not([data-theme]) .stApp [data-testid="stMarkdownContainer"] {
+        color: #49363d;
     }
-    div[data-testid="stRadio"] > label,
-    div[data-testid="stFileUploader"] label {
-        font-weight: 700;
-        color: #e9e0ff !important;
+    html[data-theme="light"] h1,
+    html[data-theme="light"] h2,
+    html[data-theme="light"] h3,
+    html[data-theme="light"] h4,
+    html:not([data-theme]) h1,
+    html:not([data-theme]) h2,
+    html:not([data-theme]) h3,
+    html:not([data-theme]) h4 {
+        color: #593d47 !important;
     }
-    div[data-testid="stFileUploader"] section {
-        background: rgba(35,27,54,.96);
-        border: 1.5px dashed #8068b2;
-        border-radius: 14px;
-        padding: 1rem;
+    html[data-theme="light"] .app-hero,
+    html:not([data-theme]) .app-hero {
+        background: linear-gradient(120deg, #9f5d75 0%, #bd7b8e 55%, #d6a2a8 100%);
+        border: 1px solid #e4c4cc;
+        box-shadow: 0 10px 26px rgba(135,76,96,.15);
+        color: #fffaf6 !important;
     }
-    div[data-testid="stFileUploader"] section * {
+    html[data-theme="light"] .app-hero *,
+    html:not([data-theme]) .app-hero * { color: #fffaf6 !important; }
+    html[data-theme="light"] .app-hero .eyebrow,
+    html:not([data-theme]) .app-hero .eyebrow { color: #fbecef !important; }
+    html[data-theme="light"] .app-hero p,
+    html:not([data-theme]) .app-hero p { color: #fff5f1 !important; }
+    html[data-theme="light"] .app-hero:after,
+    html:not([data-theme]) .app-hero:after {
+        content: "✦   ·   ✧   ·   ✦";
+        position: absolute; right: 1.5rem; top: .9rem;
+        color: rgba(255,245,248,.8); font-size: 1.1rem;
+        letter-spacing: .4rem; pointer-events: none;
+    }
+    html[data-theme="light"] div[data-testid="stAlert"],
+    html:not([data-theme]) div[data-testid="stAlert"] {
+        border-radius: 12px; border: 1px solid #e8c9cf;
+        background: #fff1ed; color: #68464f !important;
+    }
+    html[data-theme="light"] div[data-testid="stAlert"] *,
+    html:not([data-theme]) div[data-testid="stAlert"] * { color: #68464f !important; }
+    html[data-theme="light"] div[data-testid="stRadio"] > label,
+    html[data-theme="light"] div[data-testid="stFileUploader"] label,
+    html:not([data-theme]) div[data-testid="stRadio"] > label,
+    html:not([data-theme]) div[data-testid="stFileUploader"] label {
+        color: #593d47 !important; font-weight: 700;
+    }
+    html[data-theme="light"] div[data-testid="stFileUploader"] section,
+    html:not([data-theme]) div[data-testid="stFileUploader"] section {
+        background: #fffdfb; border: 1.5px dashed #d6aab5;
+        border-radius: 14px; padding: 1rem;
+    }
+    html[data-theme="light"] div[data-testid="stFileUploader"] section *,
+    html:not([data-theme]) div[data-testid="stFileUploader"] section * { color: #59434a !important; }
+    html[data-theme="light"] .stButton > button[kind="primary"],
+    html:not([data-theme]) .stButton > button[kind="primary"] {
+        background: #ad687f !important; color: #fffaf6 !important;
+        border: 1px solid #ad687f !important;
+    }
+    html[data-theme="light"] .stButton > button[kind="primary"] *,
+    html:not([data-theme]) .stButton > button[kind="primary"] * { color: #fffaf6 !important; }
+    html[data-theme="light"] .stDownloadButton > button,
+    html:not([data-theme]) .stDownloadButton > button {
+        background: #f4e4e6 !important; color: #684653 !important;
+        border: 1px solid #e4c6ce !important;
+    }
+    html[data-theme="light"] .stDownloadButton > button *,
+    html:not([data-theme]) .stDownloadButton > button * { color: #684653 !important; }
+    html[data-theme="light"] div[data-testid="stExpander"],
+    html:not([data-theme]) div[data-testid="stExpander"] {
+        background: #fffdfb; border: 1px solid #ead9dc; border-radius: 12px;
+    }
+    html[data-theme="light"] div[data-testid="stExpander"] summary *,
+    html:not([data-theme]) div[data-testid="stExpander"] summary * { color: #593d47 !important; }
+    html[data-theme="light"] [data-testid="stCaptionContainer"],
+    html:not([data-theme]) [data-testid="stCaptionContainer"] { color: #806b72 !important; }
+
+    /* DARK: тёмно-фиолетовая тема со звёздным небом */
+    html[data-theme="dark"] .stApp,
+    body[data-theme="dark"] .stApp {
+        background-color: #100d1d !important;
+        background-image:
+            radial-gradient(circle at 4% 8%, #e5d9ff 0 1.2px, transparent 2px),
+            radial-gradient(circle at 11% 24%, rgba(208,190,255,.85) 0 1px, transparent 2px),
+            radial-gradient(circle at 18% 11%, rgba(255,255,255,.9) 0 1.3px, transparent 2px),
+            radial-gradient(circle at 24% 42%, rgba(190,166,255,.75) 0 1px, transparent 2px),
+            radial-gradient(circle at 31% 17%, rgba(255,255,255,.8) 0 1.2px, transparent 2px),
+            radial-gradient(circle at 38% 7%, rgba(208,190,255,.8) 0 1px, transparent 2px),
+            radial-gradient(circle at 45% 31%, rgba(255,255,255,.75) 0 1px, transparent 2px),
+            radial-gradient(circle at 52% 13%, rgba(208,190,255,.85) 0 1.2px, transparent 2px),
+            radial-gradient(circle at 59% 40%, rgba(255,255,255,.75) 0 1px, transparent 2px),
+            radial-gradient(circle at 66% 9%, rgba(208,190,255,.8) 0 1.2px, transparent 2px),
+            radial-gradient(circle at 73% 23%, rgba(255,255,255,.9) 0 1px, transparent 2px),
+            radial-gradient(circle at 80% 8%, rgba(208,190,255,.85) 0 1.2px, transparent 2px),
+            radial-gradient(circle at 87% 34%, rgba(255,255,255,.8) 0 1px, transparent 2px),
+            radial-gradient(circle at 95% 15%, rgba(208,190,255,.9) 0 1.2px, transparent 2px),
+            radial-gradient(circle at 7% 59%, rgba(255,255,255,.65) 0 1px, transparent 2px),
+            radial-gradient(circle at 16% 76%, rgba(208,190,255,.7) 0 1px, transparent 2px),
+            radial-gradient(circle at 27% 65%, rgba(255,255,255,.7) 0 1.1px, transparent 2px),
+            radial-gradient(circle at 35% 88%, rgba(208,190,255,.75) 0 1px, transparent 2px),
+            radial-gradient(circle at 47% 72%, rgba(255,255,255,.65) 0 1px, transparent 2px),
+            radial-gradient(circle at 57% 91%, rgba(208,190,255,.75) 0 1px, transparent 2px),
+            radial-gradient(circle at 68% 65%, rgba(255,255,255,.7) 0 1.1px, transparent 2px),
+            radial-gradient(circle at 77% 82%, rgba(208,190,255,.75) 0 1px, transparent 2px),
+            radial-gradient(circle at 89% 68%, rgba(255,255,255,.7) 0 1px, transparent 2px),
+            radial-gradient(circle at 97% 92%, rgba(208,190,255,.75) 0 1px, transparent 2px),
+            linear-gradient(145deg, #100d1d 0%, #171127 48%, #211638 100%) !important;
+        background-attachment: fixed !important;
         color: #eee9ff !important;
     }
-    div[data-testid="stFileUploader"] section:hover {
-        border-color: #b69aff;
-        background: rgba(48,36,74,.98);
+    html[data-theme="dark"] [data-testid="stHeader"],
+    body[data-theme="dark"] [data-testid="stHeader"] { background: rgba(16,13,29,.9) !important; }
+    html[data-theme="dark"] .stApp p,
+    html[data-theme="dark"] .stApp label,
+    html[data-theme="dark"] .stApp li,
+    html[data-theme="dark"] .stApp [data-testid="stMarkdownContainer"],
+    body[data-theme="dark"] .stApp p,
+    body[data-theme="dark"] .stApp label,
+    body[data-theme="dark"] .stApp li,
+    body[data-theme="dark"] .stApp [data-testid="stMarkdownContainer"] {
+        color: #eee9ff !important;
     }
-    .stButton > button, .stDownloadButton > button {
-        border-radius: 11px;
-        padding: .62rem 1.15rem;
-        font-weight: 700;
-        transition: all .15s ease;
-    }
-    .stButton > button[kind="primary"] {
-        background: linear-gradient(120deg,#8b6bd1,#a184ee) !important;
+    html[data-theme="dark"] h1,
+    html[data-theme="dark"] h2,
+    html[data-theme="dark"] h3,
+    html[data-theme="dark"] h4 { color: #f4efff !important; }
+    html[data-theme="dark"] .app-hero,
+    body[data-theme="dark"] .app-hero {
+        background: linear-gradient(120deg, rgba(48,34,78,.97), rgba(79,54,126,.96) 58%, rgba(111,78,159,.95));
+        border: 1px solid rgba(194,170,255,.32);
+        box-shadow: 0 14px 38px rgba(5,3,15,.35), 0 0 26px rgba(151,117,232,.16);
         color: #fff !important;
-        border: 1px solid #b69aff !important;
+    }
+    html[data-theme="dark"] .app-hero *,
+    body[data-theme="dark"] .app-hero * { color: #fff !important; }
+    html[data-theme="dark"] .app-hero .eyebrow { color: #d9caff !important; }
+    html[data-theme="dark"] .app-hero p { color: #e8defe !important; }
+    html[data-theme="dark"] .app-hero:after,
+    body[data-theme="dark"] .app-hero:after {
+        content: "✦   ·   ✧   ·   ✦   ·   ⋆   ·   ✧   ·   ✦";
+        position: absolute; right: 1.4rem; top: .85rem;
+        color: rgba(245,237,255,.85); font-size: 1.2rem;
+        letter-spacing: .35rem; pointer-events: none;
+    }
+    html[data-theme="dark"] div[data-testid="stAlert"],
+    body[data-theme="dark"] div[data-testid="stAlert"] {
+        border-radius: 12px; border: 1px solid #745b9d;
+        background: rgba(52,39,76,.96); color: #f0eaff !important;
+    }
+    html[data-theme="dark"] div[data-testid="stAlert"] * { color: #f0eaff !important; }
+    html[data-theme="dark"] div[data-testid="stRadio"] > label,
+    html[data-theme="dark"] div[data-testid="stFileUploader"] label { color: #e9e0ff !important; font-weight: 700; }
+    html[data-theme="dark"] div[data-testid="stFileUploader"] section {
+        background: rgba(35,27,54,.96); border: 1.5px dashed #8068b2;
+        border-radius: 14px; padding: 1rem;
+    }
+    html[data-theme="dark"] div[data-testid="stFileUploader"] section * { color: #eee9ff !important; }
+    html[data-theme="dark"] .stButton > button[kind="primary"] {
+        background: linear-gradient(120deg,#8b6bd1,#a184ee) !important;
+        color: #fff !important; border: 1px solid #b69aff !important;
         box-shadow: 0 6px 18px rgba(9,5,22,.28);
     }
-    .stButton > button[kind="primary"] * {
-        color: #fff !important;
-    }
-    .stButton > button[kind="primary"]:hover {
-        background: linear-gradient(120deg,#9b7be0,#b397ff) !important;
-        border-color: #d0bcff !important;
-        transform: translateY(-1px);
-    }
-    .stDownloadButton > button {
-        background: #302448 !important;
-        color: #eee6ff !important;
+    html[data-theme="dark"] .stButton > button[kind="primary"] * { color: #fff !important; }
+    html[data-theme="dark"] .stDownloadButton > button {
+        background: #302448 !important; color: #eee6ff !important;
         border: 1px solid #69558f !important;
     }
-    .stDownloadButton > button * {
-        color: #eee6ff !important;
+    html[data-theme="dark"] .stDownloadButton > button * { color: #eee6ff !important; }
+    html[data-theme="dark"] div[data-testid="stExpander"] {
+        background: rgba(32,25,49,.97); border: 1px solid #493967; border-radius: 12px;
     }
-    .stDownloadButton > button:hover {
-        background: #40305f !important;
-        border-color: #a88be8 !important;
-    }
-    div[data-testid="stExpander"] {
-        background: rgba(32,25,49,.96);
-        border: 1px solid #493967;
-        border-radius: 12px;
-        overflow: hidden;
-    }
-    div[data-testid="stExpander"] summary,
-    div[data-testid="stExpander"] summary * {
-        color: #eee9ff !important;
-    }
-    div[data-testid="stDataFrame"], div[data-testid="stDataEditor"] {
-        background: #211a35;
-        border: 1px solid #493967;
-        border-radius: 12px;
-        padding: .35rem;
-    }
-    [data-testid="stCaptionContainer"], small {
-        color: #b8afd2 !important;
-    }
-    input, textarea, [data-baseweb="select"] > div {
-        background-color: #2b2144 !important;
-        color: #f3edff !important;
+    html[data-theme="dark"] div[data-testid="stExpander"] summary *,
+    html[data-theme="dark"] [data-testid="stCaptionContainer"] { color: #c9bddf !important; }
+    html[data-theme="dark"] input,
+    html[data-theme="dark"] textarea,
+    html[data-theme="dark"] [data-baseweb="select"] > div {
+        background-color: #2b2144 !important; color: #f3edff !important;
         border-color: #66528b !important;
     }
-    hr {
-        border-color: #493967;
+
+    /* Общие состояния элементов */
+    .stButton > button, .stDownloadButton > button {
+        border-radius: 11px; padding: .62rem 1.15rem;
+        font-weight: 700; transition: all .15s ease;
+    }
+    .stButton > button:hover, .stDownloadButton > button:hover { transform: translateY(-1px); }
+    div[data-testid="stDataFrame"], div[data-testid="stDataEditor"] {
+        border-radius: 12px; padding: .35rem;
     }
     @media (max-width: 700px) {
         .block-container { padding: 1rem .8rem 2rem .8rem; }
         .app-hero { padding: 1.25rem; border-radius: 15px; }
-        .app-hero:after { right: .8rem; letter-spacing: .2rem; }
+        .app-hero:after { right: .6rem; letter-spacing: .15rem; font-size: .95rem; }
     }
 </style>
 <div class="app-hero">
