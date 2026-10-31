@@ -16,6 +16,29 @@ st.set_page_config(page_title="Распознавание паспортов Р�
 st.title("Распознавание паспортов граждан РФ")
 st.caption("Загрузите скан или фотографию паспорта, проверьте извлечённые сведения и сохраните результат в Excel.")
 
+# Декоративные звёздные точки включаются только при выбранной тёмной теме.
+# Основной фон и все цвета интерфейса остаются под управлением Streamlit.
+try:
+    active_theme = st.context.theme.type
+except Exception:
+    active_theme = "light"
+
+if active_theme == "dark":
+    st.markdown(
+        """<style>
+        .stApp {
+            background-image:
+                radial-gradient(circle, rgba(255,255,255,.92) 0 1px, transparent 1.6px),
+                radial-gradient(circle, rgba(204,180,255,.88) 0 1.2px, transparent 2px),
+                radial-gradient(circle, rgba(255,255,255,.72) 0 .8px, transparent 1.5px);
+            background-size: 173px 151px, 257px 223px, 311px 277px;
+            background-position: 13px 21px, 71px 43px, 127px 89px;
+            background-repeat: repeat;
+        }
+        </style>""",
+        unsafe_allow_html=True,
+    )
+
 st.warning(
     "Учебный прототип. OCR может ошибаться и не подтверждает подлинность документа. "
     "Используйте только вымышленные или обезличенные образцы. Не загружайте реальные паспорта "
