@@ -13,27 +13,109 @@ from PIL import Image, ImageEnhance, ImageFilter, ImageOps
 st.set_page_config(page_title="Распознавание паспортов РФ", page_icon="🪪", layout="wide")
 
 # Визуальное оформление интерфейса. Логика распознавания и обработки файлов не меняется.
-st.markdown("""
-<style>
-    /* Shared layout */
-    .block-container { max-width:1450px; padding-top:2rem; padding-bottom:3rem; }
-    .app-hero { position:relative; overflow:hidden; padding:1.7rem 1.9rem; border-radius:20px; margin:0 0 1.35rem; }
-    .app-hero .eyebrow { font-size:.78rem; font-weight:700; letter-spacing:.12em; text-transform:uppercase; margin-bottom:.45rem; }
-    .app-hero h1 { font-size:clamp(1.65rem,3vw,2.35rem); line-height:1.18; margin:0 0 .55rem; font-weight:750; }
-    .app-hero p { margin:0; font-size:1rem; }
-    .stButton>button, .stDownloadButton>button { border-radius:11px; padding:.62rem 1.15rem; font-weight:700; transition:all .15s ease; }
-    .stButton>button:hover, .stDownloadButton>button:hover { transform:translateY(-1px); }
+# Streamlit reruns the app when the viewer switches Light / Dark.
+# Read the active theme from Streamlit itself instead of guessing from DOM selectors.
+try:
+    active_theme = st.context.theme.type
+except Exception:
+    active_theme = "light"
 
-    /* Default/light appearance: warm pink and cream */
+if active_theme == "dark":
+    theme_css = """
+    .stApp {
+        background-color:#100d1d !important;
+        background-image:
+            radial-gradient(circle at 4% 8%,#e5d9ff 0 1.3px,transparent 2px),
+            radial-gradient(circle at 11% 24%,rgba(208,190,255,.9) 0 1px,transparent 2px),
+            radial-gradient(circle at 18% 11%,#fff 0 1.3px,transparent 2px),
+            radial-gradient(circle at 24% 42%,rgba(190,166,255,.8) 0 1px,transparent 2px),
+            radial-gradient(circle at 31% 17%,#fff 0 1.2px,transparent 2px),
+            radial-gradient(circle at 38% 7%,rgba(208,190,255,.9) 0 1px,transparent 2px),
+            radial-gradient(circle at 45% 31%,#fff 0 1px,transparent 2px),
+            radial-gradient(circle at 52% 13%,rgba(208,190,255,.9) 0 1.2px,transparent 2px),
+            radial-gradient(circle at 59% 40%,#fff 0 1px,transparent 2px),
+            radial-gradient(circle at 66% 9%,rgba(208,190,255,.9) 0 1.2px,transparent 2px),
+            radial-gradient(circle at 73% 23%,#fff 0 1px,transparent 2px),
+            radial-gradient(circle at 80% 8%,rgba(208,190,255,.9) 0 1.2px,transparent 2px),
+            radial-gradient(circle at 87% 34%,#fff 0 1px,transparent 2px),
+            radial-gradient(circle at 95% 15%,rgba(208,190,255,.9) 0 1.2px,transparent 2px),
+            radial-gradient(circle at 7% 59%,#fff 0 1px,transparent 2px),
+            radial-gradient(circle at 16% 76%,rgba(208,190,255,.8) 0 1px,transparent 2px),
+            radial-gradient(circle at 27% 65%,#fff 0 1.1px,transparent 2px),
+            radial-gradient(circle at 35% 88%,rgba(208,190,255,.8) 0 1px,transparent 2px),
+            radial-gradient(circle at 47% 72%,#fff 0 1px,transparent 2px),
+            radial-gradient(circle at 57% 91%,rgba(208,190,255,.8) 0 1px,transparent 2px),
+            radial-gradient(circle at 68% 65%,#fff 0 1.1px,transparent 2px),
+            radial-gradient(circle at 77% 82%,rgba(208,190,255,.8) 0 1px,transparent 2px),
+            radial-gradient(circle at 89% 68%,#fff 0 1px,transparent 2px),
+            radial-gradient(circle at 97% 92%,rgba(208,190,255,.8) 0 1px,transparent 2px),
+            linear-gradient(145deg,#100d1d 0%,#171127 48%,#211638 100%) !important;
+        background-attachment:fixed !important;
+        color:#eee9ff !important;
+    }
+    [data-testid="stHeader"] { background:rgba(16,13,29,.92) !important; }
+    .stApp p,.stApp label,.stApp li,.stApp [data-testid="stMarkdownContainer"],
+    .stApp [data-testid="stCaptionContainer"] { color:#eee9ff !important; }
+    .stApp h1,.stApp h2,.stApp h3,.stApp h4 { color:#f4efff !important; }
+    .app-hero {
+        background:linear-gradient(120deg,#30224e 0%,#4f367e 58%,#6f4e9f 100%) !important;
+        border:1px solid rgba(194,170,255,.38);
+        box-shadow:0 14px 38px rgba(5,3,15,.4),0 0 28px rgba(151,117,232,.2);
+        color:#fff !important;
+    }
+    .app-hero * { color:#fff !important; }
+    .app-hero .eyebrow { color:#d9caff !important; }
+    .app-hero p { color:#e8defe !important; }
+    .app-hero:after {
+        content:"✦  ·  ✧  ·  ✦  ·  ⋆  ·  ✧  ·  ✦  ·  ⋆  ·  ✧  ·  ✦";
+        position:absolute; right:1rem; top:.75rem;
+        color:rgba(245,237,255,.95); font-size:1.25rem;
+        letter-spacing:.3rem; pointer-events:none;
+    }
+    div[data-testid="stAlert"] {
+        background:rgba(52,39,76,.97) !important;
+        border:1px solid #745b9d !important;
+        border-radius:12px; color:#f0eaff !important;
+    }
+    div[data-testid="stAlert"] * { color:#f0eaff !important; }
+    div[data-testid="stRadio"]>label,
+    div[data-testid="stFileUploader"] label { color:#e9e0ff !important; font-weight:700; }
+    div[data-testid="stFileUploader"] section {
+        background:rgba(35,27,54,.97) !important;
+        border:1.5px dashed #8068b2 !important; border-radius:14px;
+    }
+    div[data-testid="stFileUploader"] section * { color:#eee9ff !important; }
+    .stButton>button[kind="primary"] {
+        background:linear-gradient(120deg,#8b6bd1,#a184ee) !important;
+        color:#fff !important; border:1px solid #b69aff !important;
+    }
+    .stButton>button[kind="primary"] * { color:#fff !important; }
+    .stDownloadButton>button {
+        background:#302448 !important; color:#eee6ff !important;
+        border:1px solid #69558f !important;
+    }
+    .stDownloadButton>button * { color:#eee6ff !important; }
+    div[data-testid="stExpander"] {
+        background:rgba(32,25,49,.97) !important;
+        border:1px solid #493967 !important; border-radius:12px;
+    }
+    div[data-testid="stExpander"] summary * { color:#eee9ff !important; }
+    input,textarea,[data-baseweb="select"]>div {
+        background:#2b2144 !important; color:#f3edff !important;
+        border-color:#66528b !important;
+    }
+    """
+else:
+    theme_css = """
     .stApp {
         background:linear-gradient(180deg,#fffaf6 0%,#f8eef0 100%) !important;
         color:#49363d !important;
     }
     [data-testid="stHeader"] { background:rgba(255,250,246,.94) !important; }
-    .stApp p, .stApp label, .stApp li, .stApp [data-testid="stMarkdownContainer"] { color:#49363d; }
-    .stApp h1, .stApp h2, .stApp h3, .stApp h4 { color:#593d47 !important; }
+    .stApp p,.stApp label,.stApp li,.stApp [data-testid="stMarkdownContainer"] { color:#49363d !important; }
+    .stApp h1,.stApp h2,.stApp h3,.stApp h4 { color:#593d47 !important; }
     .app-hero {
-        background:linear-gradient(120deg,#9f5d75 0%,#bd7b8e 55%,#d6a2a8 100%);
+        background:linear-gradient(120deg,#9f5d75 0%,#bd7b8e 55%,#d6a2a8 100%) !important;
         border:1px solid #e4c4cc; box-shadow:0 10px 26px rgba(135,76,96,.15);
         color:#fffaf6 !important;
     }
@@ -41,186 +123,58 @@ st.markdown("""
     .app-hero .eyebrow { color:#fbecef !important; }
     .app-hero p { color:#fff5f1 !important; }
     .app-hero:after {
-        content:"✦   ·   ✧   ·   ✦";
-        position:absolute; right:1.5rem; top:.9rem; color:rgba(255,245,248,.8);
-        font-size:1.1rem; letter-spacing:.4rem; pointer-events:none;
+        content:"✦  ·  ✧  ·  ✦";
+        position:absolute; right:1.5rem; top:.9rem;
+        color:rgba(255,245,248,.85); font-size:1.1rem;
+        letter-spacing:.4rem; pointer-events:none;
     }
-    div[data-testid="stAlert"] { border-radius:12px; border:1px solid #e8c9cf; background:#fff1ed; color:#68464f !important; }
+    div[data-testid="stAlert"] {
+        border-radius:12px; border:1px solid #e8c9cf;
+        background:#fff1ed !important; color:#68464f !important;
+    }
     div[data-testid="stAlert"] * { color:#68464f !important; }
-    div[data-testid="stRadio"]>label, div[data-testid="stFileUploader"] label { color:#593d47 !important; font-weight:700; }
-    div[data-testid="stFileUploader"] section { background:#fffdfb; border:1.5px dashed #d6aab5; border-radius:14px; padding:1rem; }
+    div[data-testid="stRadio"]>label,
+    div[data-testid="stFileUploader"] label { color:#593d47 !important; font-weight:700; }
+    div[data-testid="stFileUploader"] section {
+        background:#fffdfb !important; border:1.5px dashed #d6aab5 !important;
+        border-radius:14px;
+    }
     div[data-testid="stFileUploader"] section * { color:#59434a !important; }
-    .stButton>button[kind="primary"] { background:#ad687f !important; color:#fffaf6 !important; border:1px solid #ad687f !important; }
+    .stButton>button[kind="primary"] {
+        background:#ad687f !important; color:#fffaf6 !important;
+        border:1px solid #ad687f !important;
+    }
     .stButton>button[kind="primary"] * { color:#fffaf6 !important; }
-    .stDownloadButton>button { background:#f4e4e6 !important; color:#684653 !important; border:1px solid #e4c6ce !important; }
+    .stDownloadButton>button {
+        background:#f4e4e6 !important; color:#684653 !important;
+        border:1px solid #e4c6ce !important;
+    }
     .stDownloadButton>button * { color:#684653 !important; }
-    div[data-testid="stExpander"] { background:#fffdfb; border:1px solid #ead9dc; border-radius:12px; }
+    div[data-testid="stExpander"] {
+        background:#fffdfb !important; border:1px solid #ead9dc !important;
+        border-radius:12px;
+    }
     div[data-testid="stExpander"] summary * { color:#593d47 !important; }
     [data-testid="stCaptionContainer"] { color:#806b72 !important; }
-    div[data-testid="stDataFrame"], div[data-testid="stDataEditor"] { border-radius:12px; padding:.35rem; }
+    """
 
-    /*
-      Streamlit may attach its active theme marker to different root containers
-      depending on version. Check the document, body, app root, and descendants.
-      Crucially, there is no "no data-theme" light selector that can override Dark.
-    */
-    :root[data-theme="dark"] .stApp,
-    body[data-theme="dark"] .stApp,
-    .stApp[data-theme="dark"],
-    .stApp:has([data-theme="dark"]),
-    :root:has([data-theme="dark"]) .stApp,
-    body:has([data-theme="dark"]) .stApp {
-        background-color:#100d1d !important;
-        background-image:
-            radial-gradient(circle at 4% 8%,#e5d9ff 0 1.2px,transparent 2px),
-            radial-gradient(circle at 11% 24%,rgba(208,190,255,.85) 0 1px,transparent 2px),
-            radial-gradient(circle at 18% 11%,rgba(255,255,255,.9) 0 1.3px,transparent 2px),
-            radial-gradient(circle at 24% 42%,rgba(190,166,255,.75) 0 1px,transparent 2px),
-            radial-gradient(circle at 31% 17%,rgba(255,255,255,.8) 0 1.2px,transparent 2px),
-            radial-gradient(circle at 38% 7%,rgba(208,190,255,.8) 0 1px,transparent 2px),
-            radial-gradient(circle at 45% 31%,rgba(255,255,255,.75) 0 1px,transparent 2px),
-            radial-gradient(circle at 52% 13%,rgba(208,190,255,.85) 0 1.2px,transparent 2px),
-            radial-gradient(circle at 59% 40%,rgba(255,255,255,.75) 0 1px,transparent 2px),
-            radial-gradient(circle at 66% 9%,rgba(208,190,255,.8) 0 1.2px,transparent 2px),
-            radial-gradient(circle at 73% 23%,rgba(255,255,255,.9) 0 1px,transparent 2px),
-            radial-gradient(circle at 80% 8%,rgba(208,190,255,.85) 0 1.2px,transparent 2px),
-            radial-gradient(circle at 87% 34%,rgba(255,255,255,.8) 0 1px,transparent 2px),
-            radial-gradient(circle at 95% 15%,rgba(208,190,255,.9) 0 1.2px,transparent 2px),
-            radial-gradient(circle at 7% 59%,rgba(255,255,255,.65) 0 1px,transparent 2px),
-            radial-gradient(circle at 16% 76%,rgba(208,190,255,.7) 0 1px,transparent 2px),
-            radial-gradient(circle at 27% 65%,rgba(255,255,255,.7) 0 1.1px,transparent 2px),
-            radial-gradient(circle at 35% 88%,rgba(208,190,255,.75) 0 1px,transparent 2px),
-            radial-gradient(circle at 47% 72%,rgba(255,255,255,.65) 0 1px,transparent 2px),
-            radial-gradient(circle at 57% 91%,rgba(208,190,255,.75) 0 1px,transparent 2px),
-            radial-gradient(circle at 68% 65%,rgba(255,255,255,.7) 0 1.1px,transparent 2px),
-            radial-gradient(circle at 77% 82%,rgba(208,190,255,.75) 0 1px,transparent 2px),
-            radial-gradient(circle at 89% 68%,rgba(255,255,255,.7) 0 1px,transparent 2px),
-            radial-gradient(circle at 97% 92%,rgba(208,190,255,.75) 0 1px,transparent 2px),
-            linear-gradient(145deg,#100d1d 0%,#171127 48%,#211638 100%) !important;
-        background-attachment:fixed !important;
-        color:#eee9ff !important;
-    }
-
-    :root[data-theme="dark"] [data-testid="stHeader"],
-    body[data-theme="dark"] [data-testid="stHeader"],
-    :root:has([data-theme="dark"]) [data-testid="stHeader"],
-    body:has([data-theme="dark"]) [data-testid="stHeader"] {
-        background:rgba(16,13,29,.92) !important;
-    }
-    :root[data-theme="dark"] .stApp p,
-    :root[data-theme="dark"] .stApp label,
-    :root[data-theme="dark"] .stApp li,
-    :root[data-theme="dark"] .stApp [data-testid="stMarkdownContainer"],
-    :root:has([data-theme="dark"]) .stApp p,
-    :root:has([data-theme="dark"]) .stApp label,
-    :root:has([data-theme="dark"]) .stApp li,
-    :root:has([data-theme="dark"]) .stApp [data-testid="stMarkdownContainer"],
-    body:has([data-theme="dark"]) .stApp p,
-    body:has([data-theme="dark"]) .stApp label,
-    body:has([data-theme="dark"]) .stApp li,
-    body:has([data-theme="dark"]) .stApp [data-testid="stMarkdownContainer"] {
-        color:#eee9ff !important;
-    }
-    :root[data-theme="dark"] .stApp h1,
-    :root[data-theme="dark"] .stApp h2,
-    :root[data-theme="dark"] .stApp h3,
-    :root[data-theme="dark"] .stApp h4,
-    :root:has([data-theme="dark"]) .stApp h1,
-    :root:has([data-theme="dark"]) .stApp h2,
-    :root:has([data-theme="dark"]) .stApp h3,
-    :root:has([data-theme="dark"]) .stApp h4 { color:#f4efff !important; }
-
-    :root[data-theme="dark"] .app-hero,
-    :root:has([data-theme="dark"]) .app-hero,
-    body:has([data-theme="dark"]) .app-hero {
-        background:linear-gradient(120deg,rgba(48,34,78,.98),rgba(79,54,126,.97) 58%,rgba(111,78,159,.96)) !important;
-        border:1px solid rgba(194,170,255,.32);
-        box-shadow:0 14px 38px rgba(5,3,15,.35),0 0 26px rgba(151,117,232,.16);
-        color:#fff !important;
-    }
-    :root[data-theme="dark"] .app-hero *,
-    :root:has([data-theme="dark"]) .app-hero *,
-    body:has([data-theme="dark"]) .app-hero * { color:#fff !important; }
-    :root[data-theme="dark"] .app-hero:after,
-    :root:has([data-theme="dark"]) .app-hero:after,
-    body:has([data-theme="dark"]) .app-hero:after {
-        content:"✦   ·   ✧   ·   ✦   ·   ⋆   ·   ✧   ·   ✦   ·   ⋆   ·   ✧";
-        position:absolute; right:1.2rem; top:.8rem; color:rgba(245,237,255,.9);
-        font-size:1.25rem; letter-spacing:.32rem; pointer-events:none;
-    }
-    :root[data-theme="dark"] div[data-testid="stAlert"],
-    :root:has([data-theme="dark"]) div[data-testid="stAlert"],
-    body:has([data-theme="dark"]) div[data-testid="stAlert"] {
-        background:rgba(52,39,76,.97) !important; border:1px solid #745b9d !important;
-        color:#f0eaff !important; border-radius:12px;
-    }
-    :root[data-theme="dark"] div[data-testid="stAlert"] *,
-    :root:has([data-theme="dark"]) div[data-testid="stAlert"] *,
-    body:has([data-theme="dark"]) div[data-testid="stAlert"] * { color:#f0eaff !important; }
-
-    :root[data-theme="dark"] div[data-testid="stRadio"]>label,
-    :root:has([data-theme="dark"]) div[data-testid="stRadio"]>label,
-    body:has([data-theme="dark"]) div[data-testid="stRadio"]>label,
-    :root[data-theme="dark"] div[data-testid="stFileUploader"] label,
-    :root:has([data-theme="dark"]) div[data-testid="stFileUploader"] label,
-    body:has([data-theme="dark"]) div[data-testid="stFileUploader"] label {
-        color:#e9e0ff !important; font-weight:700;
-    }
-    :root[data-theme="dark"] div[data-testid="stFileUploader"] section,
-    :root:has([data-theme="dark"]) div[data-testid="stFileUploader"] section,
-    body:has([data-theme="dark"]) div[data-testid="stFileUploader"] section {
-        background:rgba(35,27,54,.97) !important; border:1.5px dashed #8068b2 !important;
-    }
-    :root[data-theme="dark"] div[data-testid="stFileUploader"] section *,
-    :root:has([data-theme="dark"]) div[data-testid="stFileUploader"] section *,
-    body:has([data-theme="dark"]) div[data-testid="stFileUploader"] section * { color:#eee9ff !important; }
-
-    :root[data-theme="dark"] .stButton>button[kind="primary"],
-    :root:has([data-theme="dark"]) .stButton>button[kind="primary"],
-    body:has([data-theme="dark"]) .stButton>button[kind="primary"] {
-        background:linear-gradient(120deg,#8b6bd1,#a184ee) !important;
-        color:#fff !important; border:1px solid #b69aff !important;
-    }
-    :root[data-theme="dark"] .stButton>button[kind="primary"] *,
-    :root:has([data-theme="dark"]) .stButton>button[kind="primary"] *,
-    body:has([data-theme="dark"]) .stButton>button[kind="primary"] * { color:#fff !important; }
-    :root[data-theme="dark"] .stDownloadButton>button,
-    :root:has([data-theme="dark"]) .stDownloadButton>button,
-    body:has([data-theme="dark"]) .stDownloadButton>button {
-        background:#302448 !important; color:#eee6ff !important; border:1px solid #69558f !important;
-    }
-    :root[data-theme="dark"] .stDownloadButton>button *,
-    :root:has([data-theme="dark"]) .stDownloadButton>button *,
-    body:has([data-theme="dark"]) .stDownloadButton>button * { color:#eee6ff !important; }
-
-    :root[data-theme="dark"] div[data-testid="stExpander"],
-    :root:has([data-theme="dark"]) div[data-testid="stExpander"],
-    body:has([data-theme="dark"]) div[data-testid="stExpander"] {
-        background:rgba(32,25,49,.97) !important; border:1px solid #493967 !important;
-    }
-    :root[data-theme="dark"] div[data-testid="stExpander"] summary *,
-    :root:has([data-theme="dark"]) div[data-testid="stExpander"] summary *,
-    body:has([data-theme="dark"]) div[data-testid="stExpander"] summary * { color:#eee9ff !important; }
-    :root[data-theme="dark"] [data-testid="stCaptionContainer"],
-    :root:has([data-theme="dark"]) [data-testid="stCaptionContainer"],
-    body:has([data-theme="dark"]) [data-testid="stCaptionContainer"] { color:#c9bddf !important; }
-
-    :root[data-theme="dark"] input,
-    :root[data-theme="dark"] textarea,
-    :root[data-theme="dark"] [data-baseweb="select"]>div,
-    :root:has([data-theme="dark"]) input,
-    :root:has([data-theme="dark"]) textarea,
-    :root:has([data-theme="dark"]) [data-baseweb="select"]>div,
-    body:has([data-theme="dark"]) input,
-    body:has([data-theme="dark"]) textarea,
-    body:has([data-theme="dark"]) [data-baseweb="select"]>div {
-        background-color:#2b2144 !important; color:#f3edff !important; border-color:#66528b !important;
-    }
-    @media(max-width:700px) {
-        .block-container { padding:1rem .8rem 2rem; }
-        .app-hero { padding:1.25rem; border-radius:15px; }
-        .app-hero:after { right:.6rem; letter-spacing:.15rem; font-size:.95rem; }
-    }
+st.markdown(f"""
+<style>
+    .block-container {{ max-width:1450px; padding-top:2rem; padding-bottom:3rem; }}
+    .app-hero {{ position:relative; overflow:hidden; padding:1.7rem 1.9rem; border-radius:20px; margin:0 0 1.35rem; }}
+    .app-hero .eyebrow {{ font-size:.78rem; font-weight:700; letter-spacing:.12em; text-transform:uppercase; margin-bottom:.45rem; }}
+    .app-hero h1 {{ font-size:clamp(1.65rem,3vw,2.35rem); line-height:1.18; margin:0 0 .55rem; font-weight:750; }}
+    .app-hero p {{ margin:0; font-size:1rem; }}
+    .stButton>button,.stDownloadButton>button {{ border-radius:11px; padding:.62rem 1.15rem; font-weight:700; transition:all .15s ease; }}
+    .stButton>button:hover,.stDownloadButton>button:hover {{ transform:translateY(-1px); }}
+    div[data-testid="stDataFrame"],div[data-testid="stDataEditor"] {{ border-radius:12px; padding:.35rem; }}
+    hr {{ border-color:rgba(150,130,180,.25); }}
+    @media(max-width:700px) {{
+        .block-container {{ padding:1rem .8rem 2rem; }}
+        .app-hero {{ padding:1.25rem; border-radius:15px; }}
+        .app-hero:after {{ right:.6rem; letter-spacing:.15rem; font-size:.95rem; }}
+    }}
+    {theme_css}
 </style>
 <div class="app-hero">
   <div class="eyebrow">Документы · распознавание данных</div>
