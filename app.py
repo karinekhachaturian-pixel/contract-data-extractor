@@ -16,49 +16,80 @@ st.set_page_config(page_title="Распознавание паспортов Р�
 st.markdown("""
 <style>
     :root {
-        --ink: #49363d;
-        --muted: #806b72;
-        --line: #ead9dc;
-        --cream: #fffaf6;
-        --rose: #f4e4e6;
-        --rose-deep: #a85f78;
+        --ink: #eee9ff;
+        --muted: #b8afd2;
+        --line: #40345f;
+        --surface: #211a35;
+        --surface-soft: #2b2144;
+        --accent: #a98bfa;
     }
     html, body, [class*="css"] {
-        color: #49363d !important;
+        color: #eee9ff !important;
     }
     .stApp {
-        background: linear-gradient(180deg, #fffaf6 0%, #f8eef0 100%);
-        color: #49363d !important;
+        background:
+            radial-gradient(circle at 8% 13%, rgba(208,190,255,.78) 0 1px, transparent 1.8px),
+            radial-gradient(circle at 17% 31%, rgba(208,190,255,.55) 0 1px, transparent 1.8px),
+            radial-gradient(circle at 29% 8%, rgba(255,255,255,.72) 0 1px, transparent 1.8px),
+            radial-gradient(circle at 43% 23%, rgba(190,166,255,.55) 0 1px, transparent 1.8px),
+            radial-gradient(circle at 61% 10%, rgba(255,255,255,.68) 0 1px, transparent 1.8px),
+            radial-gradient(circle at 74% 29%, rgba(208,190,255,.58) 0 1px, transparent 1.8px),
+            radial-gradient(circle at 88% 14%, rgba(255,255,255,.72) 0 1px, transparent 1.8px),
+            radial-gradient(circle at 94% 42%, rgba(190,166,255,.5) 0 1px, transparent 1.8px),
+            radial-gradient(circle at 12% 66%, rgba(255,255,255,.48) 0 1px, transparent 1.8px),
+            radial-gradient(circle at 36% 78%, rgba(208,190,255,.45) 0 1px, transparent 1.8px),
+            radial-gradient(circle at 67% 72%, rgba(255,255,255,.45) 0 1px, transparent 1.8px),
+            radial-gradient(circle at 83% 88%, rgba(208,190,255,.48) 0 1px, transparent 1.8px),
+            linear-gradient(145deg, #100d1d 0%, #171127 48%, #211638 100%);
+        background-attachment: fixed;
+        color: #eee9ff !important;
     }
     [data-testid="stHeader"] {
-        background: rgba(255,250,246,.94);
+        background: rgba(16,13,29,.88);
+    }
+    [data-testid="stToolbar"] {
+        color: #eee9ff !important;
     }
     .block-container {
         max-width: 1450px;
         padding-top: 2rem;
         padding-bottom: 3rem;
     }
-    /* Основной текст и подписи — тёплый тёмно-коричневый для контраста */
-    p, label, span, div, li, [data-testid="stMarkdownContainer"] {
-        color: #49363d;
+    /* Контрастный светлый текст на тёмном фоне */
+    p, label, span, div, li, [data-testid="stMarkdownContainer"],
+    [data-testid="stCaptionContainer"] {
+        color: #eee9ff;
     }
     h1, h2, h3, h4 {
-        color: #593d47 !important;
+        color: #f4efff !important;
         font-weight: 700 !important;
     }
     .app-hero {
-        background: linear-gradient(120deg, #9f5d75 0%, #bd7b8e 55%, #d6a2a8 100%);
-        padding: 1.65rem 1.9rem;
-        border-radius: 18px;
+        position: relative;
+        overflow: hidden;
+        background: linear-gradient(120deg, rgba(48,34,78,.97) 0%, rgba(79,54,126,.96) 58%, rgba(111,78,159,.95) 100%);
+        padding: 1.7rem 1.9rem;
+        border: 1px solid rgba(194,170,255,.28);
+        border-radius: 20px;
         margin: 0 0 1.35rem 0;
-        box-shadow: 0 10px 26px rgba(135, 76, 96, .15);
-        color: #fffaf6 !important;
+        box-shadow: 0 14px 38px rgba(5,3,15,.35), 0 0 24px rgba(151,117,232,.12);
+        color: #fff !important;
+    }
+    .app-hero:after {
+        content: "✦      ·          ✧       ·       ✦";
+        position: absolute;
+        right: 1.5rem;
+        top: .9rem;
+        color: rgba(245,237,255,.72);
+        font-size: 1.15rem;
+        letter-spacing: .55rem;
+        pointer-events: none;
     }
     .app-hero * {
-        color: #fffaf6 !important;
+        color: #fff !important;
     }
     .app-hero .eyebrow {
-        color: #fbecef !important;
+        color: #d9caff !important;
         font-size: .78rem;
         font-weight: 700;
         letter-spacing: .12em;
@@ -66,100 +97,106 @@ st.markdown("""
         margin-bottom: .45rem;
     }
     .app-hero h1 {
-        color: #fffaf6 !important;
+        color: #fff !important;
         font-size: clamp(1.65rem, 3vw, 2.35rem);
         line-height: 1.18;
         margin: 0 0 .55rem 0;
     }
     .app-hero p {
-        color: #fff5f1 !important;
+        color: #e8defe !important;
         margin: 0;
         font-size: 1rem;
     }
     div[data-testid="stAlert"] {
         border-radius: 12px;
-        border: 1px solid #e8c9cf;
-        background: #fff1ed;
-        color: #68464f !important;
+        border: 1px solid #745b9d;
+        background: rgba(52,39,76,.94);
+        color: #f0eaff !important;
     }
     div[data-testid="stAlert"] * {
-        color: #68464f !important;
+        color: #f0eaff !important;
     }
     div[data-testid="stRadio"] > label,
     div[data-testid="stFileUploader"] label {
         font-weight: 700;
-        color: #593d47 !important;
+        color: #e9e0ff !important;
     }
     div[data-testid="stFileUploader"] section {
-        background: #fffdfb;
-        border: 1.5px dashed #d6aab5;
+        background: rgba(35,27,54,.96);
+        border: 1.5px dashed #8068b2;
         border-radius: 14px;
         padding: 1rem;
     }
     div[data-testid="stFileUploader"] section * {
-        color: #59434a !important;
+        color: #eee9ff !important;
     }
     div[data-testid="stFileUploader"] section:hover {
-        border-color: #b87389;
-        background: #fff7f5;
+        border-color: #b69aff;
+        background: rgba(48,36,74,.98);
     }
     .stButton > button, .stDownloadButton > button {
-        border-radius: 10px;
+        border-radius: 11px;
         padding: .62rem 1.15rem;
         font-weight: 700;
         transition: all .15s ease;
     }
     .stButton > button[kind="primary"] {
-        background: #ad687f !important;
-        color: #fffaf6 !important;
-        border: 1px solid #ad687f !important;
-        box-shadow: 0 5px 12px rgba(173,104,127,.16);
+        background: linear-gradient(120deg,#8b6bd1,#a184ee) !important;
+        color: #fff !important;
+        border: 1px solid #b69aff !important;
+        box-shadow: 0 6px 18px rgba(9,5,22,.28);
     }
     .stButton > button[kind="primary"] * {
-        color: #fffaf6 !important;
+        color: #fff !important;
     }
     .stButton > button[kind="primary"]:hover {
-        background: #95546b !important;
-        border-color: #95546b !important;
+        background: linear-gradient(120deg,#9b7be0,#b397ff) !important;
+        border-color: #d0bcff !important;
         transform: translateY(-1px);
     }
     .stDownloadButton > button {
-        background: #f4e4e6 !important;
-        color: #684653 !important;
-        border: 1px solid #e4c6ce !important;
+        background: #302448 !important;
+        color: #eee6ff !important;
+        border: 1px solid #69558f !important;
     }
     .stDownloadButton > button * {
-        color: #684653 !important;
+        color: #eee6ff !important;
     }
     .stDownloadButton > button:hover {
-        background: #edd6dc !important;
-        border-color: #d7aab6 !important;
+        background: #40305f !important;
+        border-color: #a88be8 !important;
     }
     div[data-testid="stExpander"] {
-        background: #fffdfb;
-        border: 1px solid #ead9dc;
+        background: rgba(32,25,49,.96);
+        border: 1px solid #493967;
         border-radius: 12px;
         overflow: hidden;
     }
     div[data-testid="stExpander"] summary,
     div[data-testid="stExpander"] summary * {
-        color: #593d47 !important;
+        color: #eee9ff !important;
     }
     div[data-testid="stDataFrame"], div[data-testid="stDataEditor"] {
-        background: #fffdfb;
-        border: 1px solid #ead9dc;
+        background: #211a35;
+        border: 1px solid #493967;
         border-radius: 12px;
         padding: .35rem;
     }
     [data-testid="stCaptionContainer"], small {
-        color: #806b72 !important;
+        color: #b8afd2 !important;
+    }
+    input, textarea, [data-baseweb="select"] > div {
+        background-color: #2b2144 !important;
+        color: #f3edff !important;
+        border-color: #66528b !important;
     }
     hr {
-        border-color: #ead9dc;
+        border-color: #493967;
     }
     @media (max-width: 700px) {
         .block-container { padding: 1rem .8rem 2rem .8rem; }
-        .app-hero { padding: 1.25rem; border-radius: 14px; }
+        .app-hero { padding: 1.25rem; border-radius: 15px; }
+        .app-hero:after { right: .8rem; letter-spacing: .2rem; }
     }
 </style>
 <div class="app-hero">
