@@ -1,0 +1,5 @@
+streamlit>=1.32
+easyocr>=1.7
+PyMuPDF>=1.23
+Pillow>=10.0
+pandas>=2.0
