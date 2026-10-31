@@ -56,6 +56,63 @@ def ocr_image(reader, img, rotations=(0,)):
                 outputs.append((str(item[1]).strip(), float(item[2])))
     return outputs
 
+
+def read_digits_zone(reader, zone):
+    """
+    Читает красную вертикальную серию/номер на правом поле внутреннего паспорта.
+    Возвращает найденные цифровые последовательности с оценкой уверенности.
+    """
+    candidates = []
+    rgb = zone.convert("RGB")
+    # Выделяем красную печать: у красных символов R заметно выше G и B.
+    arr = np.array(rgb)
+    red_mask = (
+        (arr[:, :, 0] > 85)
+        & (arr[:, :, 0] > arr[:, :, 1] * 1.18)
+        & (arr[:, :, 0] > arr[:, :, 2] * 1.12)
+    )
+    if red_mask.any():
+        # Белый фон, чёрные символы для OCR.
+        masked = np.where(red_mask, 0, 255).astype(np.uint8)
+        red_img = Image.fromarray(masked).convert("RGB")
+        variants = [red_img, red_img.rotate(90, expand=True), red_img.rotate(270, expand=True)]
+    else:
+        variants = [rgb, rgb.rotate(90, expand=True), rgb.rotate(270, expand=True)]
+
+    for variant in variants:
+        enlarged = variant.resize((variant.width * 4, variant.height * 4), Image.Resampling.LANCZOS)
+        result = reader.readtext(
+            np.array(enlarged),
+            detail=1,
+            paragraph=False,
+            allowlist="0123456789"
+        )
+        for item in result:
+            if len(item) >= 3:
+                digits = re.sub(r"\\D", "", str(item[1]))
+                if len(digits) >= 4:
+                    candidates.append((digits, float(item[2])))
+    return candidates
+
+
+def extract_code_subdivision(reader, img):
+    # Код подразделения печатается справа от даты выдачи (формат XXX-XXX).
+    zone = crop_box(img, (0.54, 0.195, 0.82, 0.245))
+    items = ocr_image(reader, zone)
+    text = " ".join(t for t, _ in items)
+    match = re.search(r"(?<!\\d)(\\d{3})\\s*[-–—]?\\s*(\\d{3})(?!\\d)", text)
+    if match:
+        return f"{match.group(1)}-{match.group(2)}", text
+
+    # Второй проход только по цифрам помогает, если дефис не распознан.
+    arr = np.array(enhance(zone, 4))
+    numeric = reader.readtext(arr, detail=1, paragraph=False, allowlist="0123456789")
+    digits = "".join(re.sub(r"\\D", "", str(x[1])) for x in numeric if len(x) >= 2)
+    if len(digits) >= 6:
+        return f"{digits[:3]}-{digits[3:6]}", text
+    return None, text
+
+
 def normalize_text(s):
     return re.sub(r"\s+", " ", str(s)).strip()
 
@@ -99,8 +156,8 @@ def parse_domestic_spread(img, reader):
 
     # Серия и номер печатаются вертикально на правом краю разворота.
     # Обрабатываем верхний и нижний сегменты отдельно, чтобы не склеивать повторы.
-    serial_top_zone = crop_box(img, (0.91, 0.105, 0.985, 0.40))
-    serial_bottom_zone = crop_box(img, (0.91, 0.65, 0.985, 0.91))
+    serial_top_zone = crop_box(img, (0.905, 0.105, 0.995, 0.405))
+    serial_bottom_zone = crop_box(img, (0.905, 0.665, 0.995, 0.91))
 
     zones = {
         "Орган выдачи": issuer_zone,
@@ -148,25 +205,18 @@ def parse_domestic_spread(img, reader):
         r"[^А-ЯЁа-яёA-Za-z0-9№.,\- ]", " ", texts["Орган выдачи"]
     )) or None
 
-    def digits_from(text):
-        return re.sub(r"\D", "", text or "")
-
-    # Принимаем только 4 цифры серии и 6 цифр номера.
-    # Не склеиваем повторы верхней и нижней страниц вслепую.
-    candidates = []
-    for label in ("Серия/номер верх", "Серия/номер низ"):
-        d = digits_from(texts[label])
-        if len(d) >= 10:
-            candidates.append(d[:10])
-        elif len(d) >= 4:
-            candidates.append(d)
+    # Серию и номер считываем только с верхней вертикальной зоны,
+    # выделяя красную печать и разрешая OCR только цифры.
+    digit_candidates = read_digits_zone(reader, serial_top_zone)
+    # Принимаем только полную последовательность из 10 цифр.
+    # Если OCR не уверен/не нашёл 10 цифр, оставляем поля пустыми для ручной проверки.
+    full_candidates = [(d[:10], conf) for d, conf in digit_candidates if len(d) >= 10]
     series = number = None
-    if candidates:
-        candidate = max(candidates, key=lambda x: min(len(x), 10))
-        if len(candidate) >= 4:
-            series = candidate[:4]
-        if len(candidate) >= 10:
-            number = candidate[4:10]
+    if full_candidates:
+        candidate, _confidence = max(full_candidates, key=lambda x: x[1])
+        series, number = candidate[:4], candidate[4:10]
+
+    subdivision, subdivision_debug = extract_code_subdivision(reader, img)
 
     return {
         "Фамилия": surname,
@@ -176,9 +226,9 @@ def parse_domestic_spread(img, reader):
         "Серия документа": series,
         "Номер документа": number,
         "Кем выдан (государственный орган)": issuer,
+        "Код подразделения": subdivision,
         "Дата выдачи": issue_date,
         "Дата рождения": birth_date,
-        "Дата окончания действия": "Не указана в документе",
         "Источник": "OCR по отдельным областям; требуется проверка",
         "_Текст OCR": texts
     }
@@ -213,6 +263,7 @@ def parse_foreign(lines):
                 "Серия документа": None,
                 "Номер документа": b[:9].replace("<", "") or None,
                 "Кем выдан (государственный орган)": None,
+                "Код подразделения": None,
                 "Дата выдачи": None,
                 "Дата рождения": mrz_date(b[13:19]),
                 "Дата окончания действия": mrz_date(b[21:27], True),
@@ -224,7 +275,7 @@ def parse_foreign(lines):
     return {
         "Фамилия": None, "Имя": None, "Отчество": None, "Пол": None,
         "Серия документа": None, "Номер документа": None,
-        "Кем выдан (государственный орган)": None, "Дата выдачи": None,
+        "Кем выдан (государственный орган)": None, "Код подразделения": None, "Дата выдачи": None,
         "Дата рождения": None, "Дата окончания действия": None,
         "Источник": "OCR не смог уверенно извлечь поля"
     }
@@ -274,7 +325,7 @@ if uploads and st.button("Распознать паспортные данные
     if rows:
         df = pd.DataFrame(rows)
         st.subheader("Извлечённые данные")
-        st.caption("Проверьте и исправьте значения вручную. Для внутреннего паспорта дата окончания не печатается в документе.")
+        st.caption("Проверьте и исправьте значения вручную. Для внутреннего паспорта отображается код подразделения; дата окончания действия не включается, поскольку она не печатается в документе.")
         edited = st.data_editor(df, use_container_width=True, hide_index=True)
         st.download_button(
             "Скачать результаты CSV",
@@ -289,6 +340,6 @@ with st.expander("Ограничения и безопасность"):
         "Распознавание по областям рассчитано на фотографию открытого разворота внутреннего паспорта "
         "с расположением страниц, похожим на тестовый шаблон. Для других ракурсов и шаблонов точность "
         "может снизиться. Загранпаспорт обрабатывается отдельно через MRZ, если зона распознана. "
-        "Внутренний паспорт РФ не содержит напечатанной даты окончания действия. "
+        "Для внутреннего паспорта РФ выводится код подразделения; дата окончания действия не включается, поскольку она не печатается в документе. "
         "Не используйте результаты без ручной проверки и не загружайте реальные паспорта в публичное приложение."
     )
