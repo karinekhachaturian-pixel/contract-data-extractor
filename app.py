@@ -12,9 +12,9 @@ from PIL import Image, ImageEnhance, ImageFilter, ImageOps
 
 st.set_page_config(page_title="Распознавание паспортов РФ", page_icon="🪪", layout="wide")
 
-# Визуальное оформление интерфейса. Логика распознавания и обработки файлов не меняется.
-# Streamlit reruns the app when the viewer switches Light / Dark.
-# Read the active theme from Streamlit itself instead of guessing from DOM selectors.
+# Визуальное оформление. Основные цвета Light/Dark задаются в .streamlit/config.toml,
+# чтобы встроенное меню Streamlit действительно переключало всю страницу.
+# Здесь оставлены только декоративные элементы, которые не переопределяют фон приложения.
 try:
     active_theme = st.context.theme.type
 except Exception:
@@ -22,41 +22,6 @@ except Exception:
 
 if active_theme == "dark":
     theme_css = """
-    .stApp {
-        background-color:#100d1d !important;
-        background-image:
-            radial-gradient(circle at 4% 8%,#e5d9ff 0 1.3px,transparent 2px),
-            radial-gradient(circle at 11% 24%,rgba(208,190,255,.9) 0 1px,transparent 2px),
-            radial-gradient(circle at 18% 11%,#fff 0 1.3px,transparent 2px),
-            radial-gradient(circle at 24% 42%,rgba(190,166,255,.8) 0 1px,transparent 2px),
-            radial-gradient(circle at 31% 17%,#fff 0 1.2px,transparent 2px),
-            radial-gradient(circle at 38% 7%,rgba(208,190,255,.9) 0 1px,transparent 2px),
-            radial-gradient(circle at 45% 31%,#fff 0 1px,transparent 2px),
-            radial-gradient(circle at 52% 13%,rgba(208,190,255,.9) 0 1.2px,transparent 2px),
-            radial-gradient(circle at 59% 40%,#fff 0 1px,transparent 2px),
-            radial-gradient(circle at 66% 9%,rgba(208,190,255,.9) 0 1.2px,transparent 2px),
-            radial-gradient(circle at 73% 23%,#fff 0 1px,transparent 2px),
-            radial-gradient(circle at 80% 8%,rgba(208,190,255,.9) 0 1.2px,transparent 2px),
-            radial-gradient(circle at 87% 34%,#fff 0 1px,transparent 2px),
-            radial-gradient(circle at 95% 15%,rgba(208,190,255,.9) 0 1.2px,transparent 2px),
-            radial-gradient(circle at 7% 59%,#fff 0 1px,transparent 2px),
-            radial-gradient(circle at 16% 76%,rgba(208,190,255,.8) 0 1px,transparent 2px),
-            radial-gradient(circle at 27% 65%,#fff 0 1.1px,transparent 2px),
-            radial-gradient(circle at 35% 88%,rgba(208,190,255,.8) 0 1px,transparent 2px),
-            radial-gradient(circle at 47% 72%,#fff 0 1px,transparent 2px),
-            radial-gradient(circle at 57% 91%,rgba(208,190,255,.8) 0 1px,transparent 2px),
-            radial-gradient(circle at 68% 65%,#fff 0 1.1px,transparent 2px),
-            radial-gradient(circle at 77% 82%,rgba(208,190,255,.8) 0 1px,transparent 2px),
-            radial-gradient(circle at 89% 68%,#fff 0 1px,transparent 2px),
-            radial-gradient(circle at 97% 92%,rgba(208,190,255,.8) 0 1px,transparent 2px),
-            linear-gradient(145deg,#100d1d 0%,#171127 48%,#211638 100%) !important;
-        background-attachment:fixed !important;
-        color:#eee9ff !important;
-    }
-    [data-testid="stHeader"] { background:rgba(16,13,29,.92) !important; }
-    .stApp p,.stApp label,.stApp li,.stApp [data-testid="stMarkdownContainer"],
-    .stApp [data-testid="stCaptionContainer"] { color:#eee9ff !important; }
-    .stApp h1,.stApp h2,.stApp h3,.stApp h4 { color:#f4efff !important; }
     .app-hero {
         background:linear-gradient(120deg,#30224e 0%,#4f367e 58%,#6f4e9f 100%) !important;
         border:1px solid rgba(194,170,255,.38);
@@ -78,8 +43,6 @@ if active_theme == "dark":
         border-radius:12px; color:#f0eaff !important;
     }
     div[data-testid="stAlert"] * { color:#f0eaff !important; }
-    div[data-testid="stRadio"]>label,
-    div[data-testid="stFileUploader"] label { color:#e9e0ff !important; font-weight:700; }
     div[data-testid="stFileUploader"] section {
         background:rgba(35,27,54,.97) !important;
         border:1.5px dashed #8068b2 !important; border-radius:14px;
@@ -107,13 +70,6 @@ if active_theme == "dark":
     """
 else:
     theme_css = """
-    .stApp {
-        background:linear-gradient(180deg,#fffaf6 0%,#f8eef0 100%) !important;
-        color:#49363d !important;
-    }
-    [data-testid="stHeader"] { background:rgba(255,250,246,.94) !important; }
-    .stApp p,.stApp label,.stApp li,.stApp [data-testid="stMarkdownContainer"] { color:#49363d !important; }
-    .stApp h1,.stApp h2,.stApp h3,.stApp h4 { color:#593d47 !important; }
     .app-hero {
         background:linear-gradient(120deg,#9f5d75 0%,#bd7b8e 55%,#d6a2a8 100%) !important;
         border:1px solid #e4c4cc; box-shadow:0 10px 26px rgba(135,76,96,.15);
@@ -133,8 +89,6 @@ else:
         background:#fff1ed !important; color:#68464f !important;
     }
     div[data-testid="stAlert"] * { color:#68464f !important; }
-    div[data-testid="stRadio"]>label,
-    div[data-testid="stFileUploader"] label { color:#593d47 !important; font-weight:700; }
     div[data-testid="stFileUploader"] section {
         background:#fffdfb !important; border:1.5px dashed #d6aab5 !important;
         border-radius:14px;
@@ -155,7 +109,6 @@ else:
         border-radius:12px;
     }
     div[data-testid="stExpander"] summary * { color:#593d47 !important; }
-    [data-testid="stCaptionContainer"] { color:#806b72 !important; }
     """
 
 st.markdown(f"""
