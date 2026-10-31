@@ -261,6 +261,8 @@ def parse_domestic_spread(img, reader):
     issue_date = parse_date(texts["Дата выдачи"])
     birth_date = parse_date(texts["Дата рождения"])
 
+    # Убираем OCR-пунктуацию в конце значения пола (например, «МУЖ,» -> «МУЖ»).
+    texts["Пол"] = re.sub(r"[,;:.]+\\s*$", "", normalize_text(texts["Пол"]))
     g = texts["Пол"].upper()
     if re.search(r"МУЖ|Mуж", g):
         gender = "Мужской"
@@ -373,6 +375,79 @@ def parse_foreign(lines):
         "Источник": "OCR не смог уверенно извлечь поля"
     }
 
+
+def make_excel_file(dataframe):
+    """Создаёт оформленный XLSX-файл с таблицей, похожей на таблицу веб-интерфейса."""
+    from openpyxl import Workbook
+    from openpyxl.styles import Font, PatternFill, Border, Side, Alignment
+    from openpyxl.utils import get_column_letter
+    from openpyxl.worksheet.table import Table, TableStyleInfo
+
+    output = io.BytesIO()
+    wb = Workbook()
+    ws = wb.active
+    ws.title = "Паспортные данные"
+
+    headers = [str(c) for c in dataframe.columns]
+    ws.append(headers)
+
+    for row in dataframe.itertuples(index=False, name=None):
+        ws.append(["" if pd.isna(value) else str(value) for value in row])
+
+    # Форматирование заголовка
+    header_fill = PatternFill("solid", fgColor="263445")
+    header_font = Font(name="Arial", size=10, bold=True, color="FFFFFF")
+    thin_gray = Side(style="thin", color="D7DEE8")
+
+    for cell in ws[1]:
+        cell.fill = header_fill
+        cell.font = header_font
+        cell.alignment = Alignment(horizontal="center", vertical="center", wrap_text=True)
+        cell.border = Border(bottom=Side(style="medium", color="4F81BD"))
+
+    # Строки данных: чередующиеся оттенки и перенос длинных значений
+    for row_idx in range(2, ws.max_row + 1):
+        fill_color = "F3F6FA" if row_idx % 2 == 0 else "FFFFFF"
+        for cell in ws[row_idx]:
+            cell.fill = PatternFill("solid", fgColor=fill_color)
+            cell.font = Font(name="Arial", size=10, color="1F2937")
+            cell.alignment = Alignment(vertical="center", wrap_text=True)
+            cell.border = Border(bottom=thin_gray)
+
+    # Удобная ширина столбцов по содержимому с разумными ограничениями
+    for col_idx, column in enumerate(ws.columns, start=1):
+        values = [str(cell.value or "") for cell in column]
+        max_len = max((len(v) for v in values), default=10)
+        header_len = len(str(ws.cell(1, col_idx).value or ""))
+        width = min(max(max_len, header_len) + 3, 42)
+        ws.column_dimensions[get_column_letter(col_idx)].width = max(width, 14)
+
+    ws.row_dimensions[1].height = 34
+    for row_idx in range(2, ws.max_row + 1):
+        ws.row_dimensions[row_idx].height = 30
+
+    ws.freeze_panes = "A2"
+    ws.auto_filter.ref = ws.dimensions
+    ws.sheet_view.showGridLines = False
+
+    # Преобразуем диапазон в Excel Table, если есть хотя бы одна строка данных.
+    if ws.max_row >= 2 and ws.max_column >= 1:
+        table_ref = f"A1:{get_column_letter(ws.max_column)}{ws.max_row}"
+        table = Table(displayName="PassportData", ref=table_ref)
+        table.tableStyleInfo = TableStyleInfo(
+            name="TableStyleMedium2",
+            showFirstColumn=False,
+            showLastColumn=False,
+            showRowStripes=True,
+            showColumnStripes=False
+        )
+        ws.add_table(table)
+
+    wb.save(output)
+    output.seek(0)
+    return output.getvalue()
+
+
 passport_type = st.radio(
     "Выберите тип паспорта",
     ["Внутренний паспорт РФ", "Заграничный паспорт РФ"],
@@ -420,11 +495,12 @@ if uploads and st.button("Распознать паспортные данные
         st.subheader("Извлечённые данные")
         st.caption("Проверьте и исправьте значения вручную. Для внутреннего паспорта отображается код подразделения; дата окончания действия не включается, поскольку она не печатается в документе.")
         edited = st.data_editor(df, use_container_width=True, hide_index=True)
+        excel_bytes = make_excel_file(edited)
         st.download_button(
-            "Скачать результаты CSV",
-            edited.to_csv(index=False).encode("utf-8-sig"),
-            file_name="passport_data.csv",
-            mime="text/csv"
+            "Скачать таблицу Excel",
+            data=excel_bytes,
+            file_name="passport_data.xlsx",
+            mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
         )
 
 with st.expander("Ограничения и безопасность"):
