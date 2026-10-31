@@ -60,40 +60,72 @@ def ocr_image(reader, img, rotations=(0,)):
 def read_digits_zone(reader, zone):
     """
     Читает красную вертикальную серию/номер на правом поле внутреннего паспорта.
-    Возвращает найденные цифровые последовательности с оценкой уверенности.
+    Сохраняет отдельные варианты OCR и объединённую последовательность цифр.
     """
     candidates = []
     rgb = zone.convert("RGB")
-    # Выделяем красную печать: у красных символов R заметно выше G и B.
     arr = np.array(rgb)
+
+    # Выделяем красные цифры, ослабляя влияние красного фона и линий бланка.
     red_mask = (
-        (arr[:, :, 0] > 85)
-        & (arr[:, :, 0] > arr[:, :, 1] * 1.18)
-        & (arr[:, :, 0] > arr[:, :, 2] * 1.12)
+        (arr[:, :, 0] > 75)
+        & (arr[:, :, 0] > arr[:, :, 1] * 1.12)
+        & (arr[:, :, 0] > arr[:, :, 2] * 1.08)
     )
     if red_mask.any():
-        # Белый фон, чёрные символы для OCR.
         masked = np.where(red_mask, 0, 255).astype(np.uint8)
-        red_img = Image.fromarray(masked).convert("RGB")
-        variants = [red_img, red_img.rotate(90, expand=True), red_img.rotate(270, expand=True)]
+        base_img = Image.fromarray(masked).convert("RGB")
     else:
-        variants = [rgb, rgb.rotate(90, expand=True), rgb.rotate(270, expand=True)]
+        base_img = rgb
+
+    variants = [
+        base_img,
+        base_img.rotate(90, expand=True),
+        base_img.rotate(270, expand=True),
+    ]
 
     for variant in variants:
-        enlarged = variant.resize((variant.width * 4, variant.height * 4), Image.Resampling.LANCZOS)
+        enlarged = variant.resize(
+            (variant.width * 5, variant.height * 5),
+            Image.Resampling.LANCZOS
+        )
         result = reader.readtext(
             np.array(enlarged),
             detail=1,
             paragraph=False,
             allowlist="0123456789"
         )
+
+        # Отдельные распознанные фрагменты.
+        fragments = []
         for item in result:
             if len(item) >= 3:
-                digits = re.sub(r"\\D", "", str(item[1]))
-                if len(digits) >= 4:
+                digits = re.sub(r"\D", "", str(item[1]))
+                if digits:
+                    fragments.append((digits, float(item[2])))
                     candidates.append((digits, float(item[2])))
-    return candidates
 
+        # EasyOCR иногда разбивает вертикальную серию и номер на несколько
+        # фрагментов. Объединяем их в порядке расположения сверху вниз/слева направо.
+        if fragments:
+            ordered = sorted(
+                result,
+                key=lambda item: (
+                    (min(pt[1] for pt in item[0]) + max(pt[1] for pt in item[0])) / 2,
+                    (min(pt[0] for pt in item[0]) + max(pt[0] for pt in item[0])) / 2
+                )
+            )
+            merged = "".join(
+                re.sub(r"\D", "", str(item[1]))
+                for item in ordered
+                if len(item) >= 3
+            )
+            merged = re.sub(r"\D", "", merged)
+            if len(merged) >= 8:
+                avg_conf = sum(conf for _, conf in fragments) / len(fragments)
+                candidates.append((merged, avg_conf))
+
+    return candidates
 
 def extract_code_subdivision(reader, img):
     # Код подразделения печатается справа от даты выдачи (формат XXX-XXX).
@@ -107,7 +139,7 @@ def extract_code_subdivision(reader, img):
     # Второй проход только по цифрам помогает, если дефис не распознан.
     arr = np.array(enhance(zone, 4))
     numeric = reader.readtext(arr, detail=1, paragraph=False, allowlist="0123456789")
-    digits = "".join(re.sub(r"\\D", "", str(x[1])) for x in numeric if len(x) >= 2)
+    digits = "".join(re.sub(r"\D", "", str(x[1])) for x in numeric if len(x) >= 2)
     if len(digits) >= 6:
         return f"{digits[:3]}-{digits[3:6]}", text
     return None, text
@@ -210,10 +242,16 @@ def parse_domestic_spread(img, reader):
     digit_candidates = read_digits_zone(reader, serial_top_zone)
     # Принимаем только полную последовательность из 10 цифр.
     # Если OCR не уверен/не нашёл 10 цифр, оставляем поля пустыми для ручной проверки.
-    full_candidates = [(d[:10], conf) for d, conf in digit_candidates if len(d) >= 10]
+    full_candidates = []
+    for digits, confidence in digit_candidates:
+        digits = re.sub(r"\D", "", digits)
+        if len(digits) >= 10:
+            # The printed passport series/number is 4 + 6 digits.
+            # Use the first ten digits from a full candidate; do not infer missing digits.
+            full_candidates.append((digits[:10], confidence))
     series = number = None
     if full_candidates:
-        candidate, _confidence = max(full_candidates, key=lambda x: x[1])
+        candidate, _confidence = max(full_candidates, key=lambda x: (x[1], len(x[0])))
         series, number = candidate[:4], candidate[4:10]
 
     subdivision, subdivision_debug = extract_code_subdivision(reader, img)
