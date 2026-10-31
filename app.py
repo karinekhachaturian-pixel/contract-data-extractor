@@ -6,6 +6,7 @@ from typing import Optional
 import easyocr
 import fitz
 import pandas as pd
+import numpy as np
 import streamlit as st
 from PIL import Image
 
@@ -39,7 +40,9 @@ def uploaded_to_images(uploaded):
 def ocr_document(images, reader):
     all_lines = []
     for image in images:
-        lines = reader.readtext(image, detail=0, paragraph=False)
+        # EasyOCR принимает путь, bytes или NumPy-массив, но не объект PIL.Image.
+        image_array = np.array(image.convert("RGB"))
+        lines = reader.readtext(image_array, detail=0, paragraph=False)
         all_lines.extend(str(x).strip() for x in lines if str(x).strip())
     return all_lines
 
@@ -222,9 +225,28 @@ passport_type = st.radio(
 
 uploads = st.file_uploader(
     "Загрузите скан или фотографию паспорта",
-    type=["png", "jpg", "jpeg", "pdf"],
+    # Не ограничиваем выбор по MIME браузера: некоторые телефоны помечают
+    # файлы .jfif как image/jpeg, из-за чего Streamlit может их отклонять.
+    type=None,
     accept_multiple_files=True
 )
+
+ALLOWED_EXTENSIONS = {".png", ".jpg", ".jpeg", ".jfif", ".jpe", ".pdf"}
+
+if uploads:
+    invalid_files = [
+        f.name for f in uploads
+        if Path(f.name).suffix.lower() not in ALLOWED_EXTENSIONS
+    ]
+    if invalid_files:
+        st.error(
+            "Неподдерживаемый формат: " + ", ".join(invalid_files)
+            + ". Разрешены PNG, JPG, JPEG, JFIF, JPE и PDF."
+        )
+        uploads = [
+            f for f in uploads
+            if Path(f.name).suffix.lower() in ALLOWED_EXTENSIONS
+        ]
 
 if uploads and st.button("Распознать паспортные данные", type="primary"):
     reader = get_reader()
