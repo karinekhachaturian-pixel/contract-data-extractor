@@ -11,8 +11,43 @@ import streamlit as st
 from PIL import Image, ImageEnhance, ImageFilter, ImageOps
 
 st.set_page_config(page_title="Распознавание паспортов РФ", page_icon="🪪", layout="wide")
-st.title("Распознавание паспортов граждан РФ")
-st.write("Загрузите скан или фотографию разворота паспорта. Проверьте извлечённые значения перед использованием.")
+
+# Визуальное оформление интерфейса. Логика распознавания и обработки файлов не меняется.
+st.markdown("""
+<style>
+    :root { --ink:#17243a; --muted:#68758a; --line:#e3e9f1; }
+    .stApp { background:linear-gradient(180deg,#f5f8fc 0%,#eef3f9 100%); color:var(--ink); }
+    [data-testid="stHeader"] { background:rgba(245,248,252,.9); }
+    .block-container { max-width:1450px; padding-top:2rem; padding-bottom:3rem; }
+    .app-hero {
+        background:linear-gradient(120deg,#173b66 0%,#2864a8 58%,#4384bd 100%);
+        padding:1.65rem 1.9rem; border-radius:18px; margin:0 0 1.35rem 0;
+        box-shadow:0 12px 30px rgba(27,67,111,.16); color:#fff;
+    }
+    .app-hero .eyebrow { color:#d9e9fa; font-size:.78rem; font-weight:700; letter-spacing:.12em; text-transform:uppercase; margin-bottom:.45rem; }
+    .app-hero h1 { color:#fff!important; font-size:clamp(1.65rem,3vw,2.35rem); line-height:1.18; margin:0 0 .55rem 0; font-weight:750; }
+    .app-hero p { color:#e8f1fb!important; margin:0; font-size:1rem; }
+    h2 { color:#1b3554!important; font-weight:750!important; letter-spacing:-.02em; }
+    div[data-testid="stAlert"] { border-radius:12px; border:1px solid #f1d89a; background:#fff9e9; }
+    div[data-testid="stRadio"]>label, div[data-testid="stFileUploader"] label { font-weight:700; color:#263a55; }
+    div[data-testid="stFileUploader"] section { background:#fff; border:1.5px dashed #a9bdd5; border-radius:14px; padding:1rem; }
+    div[data-testid="stFileUploader"] section:hover { border-color:#3978b9; background:#f8fbff; }
+    .stButton>button, .stDownloadButton>button { border-radius:10px; padding:.62rem 1.15rem; font-weight:700; transition:all .15s ease; }
+    .stButton>button[kind="primary"] { background:#2864a8; color:white; border:0; box-shadow:0 5px 12px rgba(40,100,168,.18); }
+    .stButton>button[kind="primary"]:hover { background:#1d4f87; transform:translateY(-1px); }
+    .stDownloadButton>button { background:#eaf1f9; color:#214f80; border:1px solid #cbd9e8; }
+    .stDownloadButton>button:hover { background:#dce9f7; border-color:#9fb9d5; }
+    div[data-testid="stExpander"] { background:#fff; border:1px solid var(--line); border-radius:12px; overflow:hidden; }
+    div[data-testid="stDataFrame"], div[data-testid="stDataEditor"] { background:#fff; border:1px solid #e0e7f0; border-radius:12px; padding:.35rem; }
+    hr { border-color:#e2e8f0; }
+    @media(max-width:700px) { .block-container{padding:1rem .8rem 2rem} .app-hero{padding:1.25rem;border-radius:14px} }
+</style>
+<div class="app-hero">
+  <div class="eyebrow">Документы · распознавание данных</div>
+  <h1>Распознавание паспортов граждан РФ</h1>
+  <p>Загрузите скан или фотографию паспорта, проверьте извлечённые сведения и сохраните результат в Excel.</p>
+</div>
+""", unsafe_allow_html=True)
 
 st.warning(
     "Учебный прототип. OCR может ошибаться и не подтверждает подлинность документа. "
@@ -377,7 +412,7 @@ def parse_foreign(lines):
 
 
 def make_excel_file(dataframe):
-    """Создаёт оформленный XLSX-файл с таблицей, похожей на таблицу веб-интерфейса."""
+    """Создаёт аккуратно оформленную Excel-таблицу с паспортными данными."""
     from openpyxl import Workbook
     from openpyxl.styles import Font, PatternFill, Border, Side, Alignment
     from openpyxl.utils import get_column_letter
@@ -388,58 +423,80 @@ def make_excel_file(dataframe):
     ws = wb.active
     ws.title = "Паспортные данные"
 
-    headers = [str(c) for c in dataframe.columns]
-    ws.append(headers)
+    last_col = max(1, len(dataframe.columns))
+    last_letter = get_column_letter(last_col)
 
-    for row in dataframe.itertuples(index=False, name=None):
-        ws.append(["" if pd.isna(value) else str(value) for value in row])
+    ws.merge_cells(start_row=1, start_column=1, end_row=1, end_column=last_col)
+    title = ws.cell(1, 1, "РЕЗУЛЬТАТЫ РАСПОЗНАВАНИЯ ПАСПОРТНЫХ ДАННЫХ")
+    title.font = Font(name="Aptos Display", size=16, bold=True, color="FFFFFF")
+    title.fill = PatternFill("solid", fgColor="183B5B")
+    title.alignment = Alignment(vertical="center", horizontal="left", indent=1)
 
-    # Форматирование заголовка
-    header_fill = PatternFill("solid", fgColor="263445")
-    header_font = Font(name="Arial", size=10, bold=True, color="FFFFFF")
-    thin_gray = Side(style="thin", color="D7DEE8")
+    ws.merge_cells(start_row=2, start_column=1, end_row=2, end_column=last_col)
+    subtitle = ws.cell(2, 1, "Проверьте корректность распознанных сведений перед использованием.")
+    subtitle.font = Font(name="Aptos", size=10, italic=True, color="5B6B7D")
+    subtitle.fill = PatternFill("solid", fgColor="F1F5F9")
+    subtitle.alignment = Alignment(vertical="center", horizontal="left", indent=1)
 
-    for cell in ws[1]:
-        cell.fill = header_fill
-        cell.font = header_font
+    header_row = 4
+    for col_idx, header in enumerate(dataframe.columns, start=1):
+        ws.cell(header_row, col_idx, str(header))
+
+    for row_idx, row in enumerate(dataframe.itertuples(index=False, name=None), start=header_row + 1):
+        for col_idx, value in enumerate(row, start=1):
+            cell = ws.cell(row_idx, col_idx, "" if pd.isna(value) else str(value))
+            cell.font = Font(name="Aptos", size=10, color="243447")
+            cell.alignment = Alignment(vertical="center", horizontal="left", wrap_text=True)
+            cell.fill = PatternFill("solid", fgColor="F7FAFD" if row_idx % 2 else "FFFFFF")
+            cell.border = Border(bottom=Side(style="hair", color="DCE5EF"))
+
+    for cell in ws[header_row]:
+        cell.font = Font(name="Aptos", size=10, bold=True, color="FFFFFF")
+        cell.fill = PatternFill("solid", fgColor="2E5F8A")
         cell.alignment = Alignment(horizontal="center", vertical="center", wrap_text=True)
-        cell.border = Border(bottom=Side(style="medium", color="4F81BD"))
+        cell.border = Border(bottom=Side(style="medium", color="183B5B"),
+                             right=Side(style="thin", color="7896B3"))
 
-    # Строки данных: чередующиеся оттенки и перенос длинных значений
-    for row_idx in range(2, ws.max_row + 1):
-        fill_color = "F3F6FA" if row_idx % 2 == 0 else "FFFFFF"
-        for cell in ws[row_idx]:
-            cell.fill = PatternFill("solid", fgColor=fill_color)
-            cell.font = Font(name="Arial", size=10, color="1F2937")
-            cell.alignment = Alignment(vertical="center", wrap_text=True)
-            cell.border = Border(bottom=thin_gray)
-
-    # Удобная ширина столбцов по содержимому с разумными ограничениями
-    for col_idx, column in enumerate(ws.columns, start=1):
-        values = [str(cell.value or "") for cell in column]
-        max_len = max((len(v) for v in values), default=10)
-        header_len = len(str(ws.cell(1, col_idx).value or ""))
-        width = min(max(max_len, header_len) + 3, 42)
-        ws.column_dimensions[get_column_letter(col_idx)].width = max(width, 14)
+    preferred_widths = {
+        "Файл": 24, "Фамилия": 19, "Имя": 17, "Отчество": 21, "Пол": 13,
+        "Серия документа": 18, "Номер документа": 19,
+        "Кем выдан (государственный орган)": 42, "Код подразделения": 20,
+        "Дата выдачи": 17, "Дата рождения": 17, "Источник": 30,
+    }
+    for col_idx, column_name in enumerate(dataframe.columns, start=1):
+        letter = get_column_letter(col_idx)
+        if str(column_name) in preferred_widths:
+            width = preferred_widths[str(column_name)]
+        else:
+            values = [len(str(column_name))] + [
+                len(str(v)) for v in dataframe.iloc[:, col_idx - 1].fillna("").tolist()
+            ]
+            width = min(max(max(values, default=14) + 3, 15), 32)
+        ws.column_dimensions[letter].width = width
 
     ws.row_dimensions[1].height = 34
-    for row_idx in range(2, ws.max_row + 1):
-        ws.row_dimensions[row_idx].height = 30
+    ws.row_dimensions[2].height = 24
+    ws.row_dimensions[3].height = 8
+    ws.row_dimensions[header_row].height = 38
+    for row_idx in range(header_row + 1, ws.max_row + 1):
+        ws.row_dimensions[row_idx].height = 34
 
-    ws.freeze_panes = "A2"
-    ws.auto_filter.ref = ws.dimensions
+    ws.freeze_panes = "A5"
     ws.sheet_view.showGridLines = False
+    ws.sheet_view.zoomScale = 90
+    ws.auto_filter.ref = f"A{header_row}:{last_letter}{ws.max_row}"
+    ws.sheet_properties.pageSetUpPr.fitToPage = True
+    ws.page_setup.orientation = "landscape"
+    ws.page_setup.fitToWidth = 1
+    ws.page_setup.fitToHeight = 0
+    ws.print_title_rows = f"1:{header_row}"
 
-    # Преобразуем диапазон в Excel Table, если есть хотя бы одна строка данных.
-    if ws.max_row >= 2 and ws.max_column >= 1:
-        table_ref = f"A1:{get_column_letter(ws.max_column)}{ws.max_row}"
+    if ws.max_row > header_row and ws.max_column > 0:
+        table_ref = f"A{header_row}:{last_letter}{ws.max_row}"
         table = Table(displayName="PassportData", ref=table_ref)
         table.tableStyleInfo = TableStyleInfo(
-            name="TableStyleMedium2",
-            showFirstColumn=False,
-            showLastColumn=False,
-            showRowStripes=True,
-            showColumnStripes=False
+            name="TableStyleMedium2", showFirstColumn=False, showLastColumn=False,
+            showRowStripes=True, showColumnStripes=False
         )
         ws.add_table(table)
 
