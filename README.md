@@ -10,8 +10,7 @@ Python, Streamlit, EasyOCR, PyMuPDF, Pillow, NumPy, Pandas.
 
 ## Запуск
 ```bash
-pip install -r requirements.txt
-streamlit run app.py
+переходим по ссылке на веб-интерфейс: https://contract-data-extractor-gbmhymupmm6aubmdbaw9f2.streamlit.app
 ```
 
 ## Ограничения
