@@ -13,133 +13,120 @@ from PIL import Image, ImageEnhance, ImageFilter, ImageOps
 st.set_page_config(page_title="Распознавание паспортов РФ", page_icon="🪪", layout="wide")
 
 # Визуальное оформление.
-# Используем st.html для подключения CSS: так браузер не выводит фрагменты
-# стилей как обычный текст. Цвета берутся из активной темы Streamlit.
-app_css = """
+# Цвет шапки зависит от primaryColor выбранной темы Streamlit.
+st.html("""
 <style>
     .block-container {
-        max-width:1450px;
-        padding-top:2rem;
-        padding-bottom:3rem;
+        max-width: 1450px;
+        padding-top: 1.5rem;
+        padding-bottom: 3rem;
+        position: relative;
+        z-index: 1;
     }
 
-    /* Общий фон: цвет задаётся выбранной темой Streamlit.
-       Точки очень малоконтрастные в светлой теме и заметные в тёмной. */
-    .stApp,
-    [data-testid="stAppViewContainer"] {
-        background-color:var(--background-color) !important;
+    /* Звёздные точки по экрану. На светлом фоне белые точки почти не видны,
+       на тёмном фиолетовом фоне становятся заметными. */
+    .stApp {
+        position: relative;
+        isolation: isolate;
+    }
+    .stApp::before {
+        content: "";
+        position: fixed;
+        inset: 0;
+        z-index: 0;
+        pointer-events: none;
+        opacity: .78;
+        mix-blend-mode: screen;
         background-image:
-            radial-gradient(circle, rgba(255,255,255,.72) 0 1px, transparent 1.6px),
-            radial-gradient(circle, rgba(210,190,255,.58) 0 1.1px, transparent 1.8px),
-            radial-gradient(circle, rgba(255,255,255,.48) 0 .8px, transparent 1.5px),
-            radial-gradient(circle, rgba(190,165,255,.48) 0 1px, transparent 1.8px) !important;
-        background-size:173px 151px, 257px 223px, 311px 277px, 397px 337px !important;
-        background-position:13px 21px, 71px 43px, 127px 89px, 31px 157px !important;
-        background-repeat:repeat !important;
-        background-attachment:fixed !important;
+            radial-gradient(circle, rgba(255,255,255,.95) 0 1px, transparent 1.7px),
+            radial-gradient(circle, rgba(224,205,255,.9) 0 1.2px, transparent 2px),
+            radial-gradient(circle, rgba(255,255,255,.8) 0 .8px, transparent 1.6px);
+        background-size: 173px 151px, 257px 223px, 311px 277px;
+        background-position: 13px 21px, 71px 43px, 127px 89px;
+        background-repeat: repeat;
     }
 
-    [data-testid="stHeader"] {
-        background:transparent !important;
+    .passport-hero {
+        box-sizing: border-box;
+        width: 100%;
+        position: relative;
+        overflow: hidden;
+        padding: 1.7rem 1.9rem 1.6rem;
+        margin: 0 0 1.35rem 0;
+        border-radius: 20px;
+        box-shadow: 0 12px 30px rgba(35, 20, 45, .18);
+    }
+    .passport-hero,
+    .passport-hero * {
+        color: #fff !important;
+        opacity: 1 !important;
+    }
+    .passport-hero .eyebrow {
+        font-size: .95rem;
+        font-weight: 700;
+        margin: 0 0 1.4rem 0;
+        letter-spacing: .02em;
+    }
+    .passport-hero h1 {
+        font-size: clamp(1.65rem, 3vw, 2.35rem);
+        line-height: 1.18;
+        margin: 0 0 .7rem 0;
+        font-weight: 750;
+    }
+    .passport-hero .subtitle {
+        font-size: 1rem;
+        line-height: 1.5;
+        margin: 0;
+    }
+    .passport-hero .hero-stars {
+        position: absolute;
+        top: .65rem;
+        right: 1.2rem;
+        font-size: 1.05rem;
+        letter-spacing: .3rem;
+        color: rgba(255,255,255,.92) !important;
+        pointer-events: none;
+        white-space: nowrap;
     }
 
-    /* Основной блок использует primaryColor активной темы:
-       розовый в Light и фиолетовый в Dark согласно config.toml. */
-    .st-key-app_hero {
-        position:relative;
-        overflow:hidden;
-        padding:1.7rem 1.9rem 1.6rem;
-        border-radius:20px;
-        margin:0 0 1.35rem;
-        background:linear-gradient(
-            120deg,
-            var(--primary-color) 0%,
-            color-mix(in srgb, var(--primary-color) 78%, var(--secondary-background-color)) 58%,
-            color-mix(in srgb, var(--primary-color) 55%, var(--background-color)) 100%
-        ) !important;
-        border:1px solid var(--primary-color);
-        box-shadow:0 10px 28px rgba(0,0,0,.18);
+    .stButton > button,
+    .stDownloadButton > button {
+        border-radius: 11px;
+        padding: .62rem 1.15rem;
+        font-weight: 700;
     }
-
-    .st-key-app_hero h1,
-    .st-key-app_hero p,
-    .st-key-app_hero [data-testid="stMarkdownContainer"] {
-        color:#fff !important;
-    }
-
-    .st-key-app_hero h1 {
-        font-size:clamp(1.65rem,3vw,2.35rem);
-        line-height:1.18;
-        margin:.15rem 0 .55rem;
-        font-weight:750;
-    }
-
-    .st-key-app_hero p {
-        margin:0;
-        font-size:1rem;
-    }
-
-    .st-key-app_hero:after {
-        content:"✦  ·  ✧  ·  ✦  ·  ⋆  ·  ✧  ·  ✦";
-        position:absolute;
-        right:1.2rem;
-        top:.75rem;
-        color:rgba(255,255,255,.92);
-        font-size:1.15rem;
-        letter-spacing:.3rem;
-        pointer-events:none;
-    }
-
-    [data-testid="stFileUploaderDropzone"],
-    [data-testid="stExpander"] {
-        background:var(--secondary-background-color) !important;
-        border-color:var(--border-color) !important;
-        border-radius:12px;
-    }
-
-    [data-testid="stAlert"] {
-        background:var(--secondary-background-color) !important;
-        border:1px solid var(--border-color) !important;
-        border-radius:12px;
-    }
-
-    .stButton>button,
-    .stDownloadButton>button {
-        border-radius:11px;
-        padding:.62rem 1.15rem;
-        font-weight:700;
-        transition:all .15s ease;
-    }
-
-    .stButton>button:hover,
-    .stDownloadButton>button:hover {
-        transform:translateY(-1px);
-    }
-
-    div[data-testid="stDataFrame"],
-    div[data-testid="stDataEditor"] {
-        border-radius:12px;
-        padding:.35rem;
-    }
-
-    @media(max-width:700px) {
-        .block-container { padding:1rem .8rem 2rem; }
-        .st-key-app_hero { padding:1.25rem; border-radius:15px; }
-        .st-key-app_hero:after {
-            right:.6rem;
-            letter-spacing:.15rem;
-            font-size:.95rem;
+    @media (max-width: 700px) {
+        .block-container { padding: 1rem .8rem 2rem; }
+        .passport-hero { padding: 1.25rem; border-radius: 15px; }
+        .passport-hero .hero-stars {
+            right: .6rem;
+            letter-spacing: .12rem;
+            font-size: .9rem;
         }
     }
 </style>
-"""
+""")
 
-st.html(app_css)
-
-with st.container(key="app_hero"):
-    st.markdown("### Документы · распознавание данных")
-    st.markdown("# Распознавание паспортов граждан РФ")
-    st.markdown("Загрузите скан или фотографию паспорта, проверьте извлечённые сведения и сохраните результат в Excel.")
+# У шапки задан фон непосредственно в HTML-элементе (inline style),
+# поэтому он не зависит от CSS-классов и DOM-структуры Streamlit.
+# --primary-color берётся из текущей темы: розовый для Light, фиолетовый для Dark.
+st.html("""
+<div class="passport-hero" style="
+    background: linear-gradient(
+        120deg,
+        color-mix(in srgb, var(--primary-color, #b96f89) 82%, #30204f) 0%,
+        var(--primary-color, #d49aaa) 58%,
+        color-mix(in srgb, var(--primary-color, #eed0d4) 68%, #ffffff) 100%
+    );
+    border: 1px solid var(--primary-color, #d8a8b7);
+">
+    <div class="hero-stars">✦ · ✧ · ✦ · ⋆ · ✧ · ✦</div>
+    <div class="eyebrow">Документы · распознавание данных</div>
+    <h1>Распознавание паспортов граждан РФ</h1>
+    <p class="subtitle">Загрузите скан или фотографию паспорта, проверьте извлечённые сведения и сохраните результат в Excel.</p>
+</div>
+""")
 
 st.warning(
     "Учебный прототип. OCR может ошибаться и не подтверждает подлинность документа. "
