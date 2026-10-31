@@ -79,74 +79,95 @@ def parse_date(text):
 def field_value(items):
     return normalize_text(" ".join(t for t, _ in items)) or None
 
+
 def parse_domestic_spread(img, reader):
-    # Coordinates are approximate zones for a photographed open internal passport.
-    # Each zone is OCR'd independently to reduce interference from stamps and background.
-    issuer_zone = crop_box(img, (0.04, 0.07, 0.90, 0.24))
-    issue_date_zone = crop_box(img, (0.08, 0.22, 0.48, 0.31))
-    serial_zone = crop_box(img, (0.89, 0.08, 0.995, 0.91))
-    surname_zone = crop_box(img, (0.32, 0.53, 0.90, 0.62))
-    name_zone = crop_box(img, (0.32, 0.62, 0.90, 0.69))
-    patronymic_zone = crop_box(img, (0.32, 0.67, 0.90, 0.74))
-    gender_birth_zone = crop_box(img, (0.32, 0.70, 0.91, 0.79))
+    """
+    Распознавание открытого разворота внутреннего паспорта по узким зонам.
+    Координаты рассчитаны под тестовый образец 960x1328; для других кадров
+    потребуется выравнивание/настройка зон.
+    """
+    # Верхняя страница: только строки наименования органа, без даты и кода.
+    issuer_zone = crop_box(img, (0.27, 0.085, 0.84, 0.205))
+    issue_date_zone = crop_box(img, (0.13, 0.195, 0.39, 0.245))
 
-    issuer_items = ocr_image(reader, issuer_zone)
-    issue_items = ocr_image(reader, issue_date_zone)
-    # Series/number are printed vertically along the right edge on many internal passports.
-    serial_items = ocr_image(reader, serial_zone, rotations=(0, 90, 270))
-    surname_items = ocr_image(reader, surname_zone)
-    name_items = ocr_image(reader, name_zone)
-    patronymic_items = ocr_image(reader, patronymic_zone)
-    gender_birth_items = ocr_image(reader, gender_birth_zone)
+    # Нижняя страница: вырезаем именно значения справа от подписей.
+    surname_zone = crop_box(img, (0.47, 0.545, 0.78, 0.585))
+    name_zone = crop_box(img, (0.49, 0.625, 0.79, 0.665))
+    patronymic_zone = crop_box(img, (0.42, 0.665, 0.80, 0.705))
+    gender_zone = crop_box(img, (0.35, 0.705, 0.49, 0.745))
+    birth_date_zone = crop_box(img, (0.56, 0.705, 0.80, 0.75))
 
-    issuer_text = best_text(issuer_items)
-    issue_text = best_text(issue_items)
-    serial_text = best_text(serial_items)
-    surname_text = best_text(surname_items)
-    name_text = best_text(name_items)
-    patronymic_text = best_text(patronymic_items)
-    gender_birth_text = best_text(gender_birth_items)
+    # Серия и номер печатаются вертикально на правом краю разворота.
+    # Обрабатываем верхний и нижний сегменты отдельно, чтобы не склеивать повторы.
+    serial_top_zone = crop_box(img, (0.91, 0.105, 0.985, 0.40))
+    serial_bottom_zone = crop_box(img, (0.91, 0.65, 0.985, 0.91))
 
-    # Extract dates only from their expected regions.
-    issue_date = parse_date(issue_text)
-    birth_date = parse_date(gender_birth_text)
+    zones = {
+        "Орган выдачи": issuer_zone,
+        "Дата выдачи": issue_date_zone,
+        "Серия/номер верх": serial_top_zone,
+        "Серия/номер низ": serial_bottom_zone,
+        "Фамилия": surname_zone,
+        "Имя": name_zone,
+        "Отчество": patronymic_zone,
+        "Пол": gender_zone,
+        "Дата рождения": birth_date_zone,
+    }
+    texts = {}
+    for label, zone in zones.items():
+        # Узкие области читаем с увеличением; вертикальные цифры пробуем
+        # в нескольких ориентациях.
+        rotations = (0, 90, 270) if "Серия/номер" in label else (0,)
+        items = ocr_image(reader, zone, rotations=rotations)
+        texts[label] = best_text(items)
 
-    # Passport series and number: digits often appear as two groups of 2 + 6.
-    serial_digits = re.sub(r"\D", "", serial_text)
-    series = number = None
-    if len(serial_digits) >= 10:
-        series = serial_digits[:4]
-        number = serial_digits[4:10]
-    elif len(serial_digits) >= 4:
-        series = serial_digits[:4]
-        if len(serial_digits) >= 6:
-            number = serial_digits[4:10] or None
+    def clean_name(value):
+        value = re.sub(r"[^А-ЯЁа-яёA-Za-z\- ]", " ", value or "")
+        words = [w for w in normalize_text(value).split() if len(w) > 1]
+        # Отбрасываем возможные OCR-остатки подписей, оставляя максимум 2 слова.
+        ignored = {"ФАМИЛИЯ", "ИМЯ", "ОТЧЕСТВО", "ПОЛ", "МУЖ", "ЖЕН"}
+        words = [w for w in words if w.upper() not in ignored]
+        return " ".join(words[:2]) or None
 
-    # Try remove printed field labels and keep only the most plausible name text.
-    def clean_name(s, labels):
-        s = re.sub(r"(?i)\b(" + "|".join(labels) + r")\b", " ", s)
-        s = re.sub(r"[^А-ЯЁа-яёA-Za-z\-\s]", " ", s)
-        words = [x for x in normalize_text(s).split() if len(x) > 1]
-        return " ".join(words[:3]) if words else None
+    surname = clean_name(texts["Фамилия"])
+    first_name = clean_name(texts["Имя"])
+    patronymic = clean_name(texts["Отчество"])
 
-    surname = clean_name(surname_text, ["фамилия"])
-    first_name = clean_name(name_text, ["имя"])
-    patronymic = clean_name(patronymic_text, ["отчество"])
+    issue_date = parse_date(texts["Дата выдачи"])
+    birth_date = parse_date(texts["Дата рождения"])
 
-    # Gender may be printed as МУЖ. or ЖЕН.
-    g = gender_birth_text.upper()
-    if re.search(r"\bМУЖ\b|МУЖСК", g):
+    g = texts["Пол"].upper()
+    if re.search(r"МУЖ|Mуж", g):
         gender = "Мужской"
-    elif re.search(r"\bЖЕН\b|ЖЕНСК", g):
+    elif re.search(r"ЖЕН", g):
         gender = "Женский"
     else:
         gender = None
 
-    issuer = re.sub(r"(?i)паспорт выдан|кем выдан|орган,? выдавший", " ", issuer_text)
-    issuer = normalize_text(re.sub(r"[^А-ЯЁа-яёA-Za-z0-9№.,\- ]", " ", issuer))
-    issuer = issuer or None
+    issuer = normalize_text(re.sub(
+        r"[^А-ЯЁа-яёA-Za-z0-9№.,\- ]", " ", texts["Орган выдачи"]
+    )) or None
 
-    # No printed expiry date on the internal Russian passport.
+    def digits_from(text):
+        return re.sub(r"\D", "", text or "")
+
+    # Принимаем только 4 цифры серии и 6 цифр номера.
+    # Не склеиваем повторы верхней и нижней страниц вслепую.
+    candidates = []
+    for label in ("Серия/номер верх", "Серия/номер низ"):
+        d = digits_from(texts[label])
+        if len(d) >= 10:
+            candidates.append(d[:10])
+        elif len(d) >= 4:
+            candidates.append(d)
+    series = number = None
+    if candidates:
+        candidate = max(candidates, key=lambda x: min(len(x), 10))
+        if len(candidate) >= 4:
+            series = candidate[:4]
+        if len(candidate) >= 10:
+            number = candidate[4:10]
+
     return {
         "Фамилия": surname,
         "Имя": first_name,
@@ -158,16 +179,8 @@ def parse_domestic_spread(img, reader):
         "Дата выдачи": issue_date,
         "Дата рождения": birth_date,
         "Дата окончания действия": "Не указана в документе",
-        "Источник": "OCR по областям; требуется проверка",
-        "_Текст OCR": {
-            "Орган выдачи": issuer_text,
-            "Дата выдачи": issue_text,
-            "Серия/номер": serial_text,
-            "Фамилия": surname_text,
-            "Имя": name_text,
-            "Отчество": patronymic_text,
-            "Пол/дата рождения": gender_birth_text,
-        }
+        "Источник": "OCR по отдельным областям; требуется проверка",
+        "_Текст OCR": texts
     }
 
 def parse_foreign(lines):
