@@ -3,8 +3,7 @@ import re
 from datetime import date, datetime, timedelta
 from pathlib import Path
 
-import easyocr
-import fitz
+import pymupdf as fitz
 import numpy as np
 import pandas as pd
 import streamlit as st
@@ -136,6 +135,9 @@ st.warning(
 
 @st.cache_resource
 def get_reader():
+    # Загружаем EasyOCR и PyTorch только по нажатию кнопки распознавания.
+    # Благодаря этому интерфейс отображается сразу, без ожидания тяжёлого импорта.
+    import easyocr
     return easyocr.Reader(["ru", "en"], gpu=False)
 
 def to_images(uploaded):
