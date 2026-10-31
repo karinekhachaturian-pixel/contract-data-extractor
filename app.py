@@ -190,6 +190,23 @@ def parse_series_number_from_text(text):
     return None, None
 
 
+
+def clean_issuer_text(value):
+    """Нормализует частые ошибки OCR в наименовании органа выдачи."""
+    if not value:
+        return None
+    value = normalize_text(value).upper()
+    # Исправляем типичные лишние/подменённые символы в слове ДЕЛ.
+    value = re.sub(r"\bДЕЛЛ\b", "ДЕЛ", value)
+    value = re.sub(r"\bДЕПЛ\b", "ДЕЛ", value)
+    value = re.sub(r"\bДЕ1Л\b", "ДЕЛ", value)
+    value = re.sub(r"\bВНУТРЕННИХ\s+ДЕЛ{2,}\b", "ВНУТРЕННИХ ДЕЛ", value)
+    # Убираем мусорные символы по краям и повторные пробелы.
+    value = re.sub(r"[^А-ЯЁ0-9№.,\- ]", " ", value)
+    value = re.sub(r"\s+", " ", value).strip(" -.,")
+    return value or None
+
+
 def parse_domestic_spread(img, reader):
     """
     Распознавание открытого разворота внутреннего паспорта по узким зонам.
@@ -252,9 +269,17 @@ def parse_domestic_spread(img, reader):
     else:
         gender = None
 
-    issuer = normalize_text(re.sub(
-        r"[^А-ЯЁа-яёA-Za-z0-9№.,\- ]", " ", texts["Орган выдачи"]
-    )) or None
+    issuer = clean_issuer_text(texts["Орган выдачи"])
+    # В диагностике показываем только нормализованную дату, без хвостов OCR
+    # вроде "ачн", если дата распознана.
+    if issue_date:
+        texts["Дата выдачи"] = issue_date
+    else:
+        texts["Дата выдачи"] = normalize_text(
+            re.sub(r"(?i)\b[а-яё]{1,5}\b", " ", texts["Дата выдачи"])
+        )
+    if issuer:
+        texts["Орган выдачи"] = issuer
 
     # Сначала используем обычный OCR текста верхней вертикальной зоны:
     # на тестовом образце он уже видит последовательность вида 11 04 000000.
