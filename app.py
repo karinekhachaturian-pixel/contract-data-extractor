@@ -804,24 +804,9 @@ def parse_domestic_spread(img, reader):
     if not series or not number:
         series, number = parse_vertical_document_number(reader, img)
 
-    debug = {
-        "Орган выдачи (по строкам)": issuer_raw or "Не распознано",
-        "Дата выдачи (рядом с подписью)": issue_raw or "Не распознано",
-        "Фамилия (рядом с подписью)": surname_raw or "Не распознано",
-        "Имя (рядом с подписью)": given_raw or "Не распознано",
-        "Отчество (рядом с подписью)": patronymic_raw or "Не распознано",
-        "Пол (рядом с подписью)": gender_raw or "Не распознано",
-        "Дата рождения (рядом с подписью)": birth_raw or "Не распознано",
-        "Серия документа": series or "Не распознана — проверьте вручную",
-        "Номер документа": number or "Не распознан — проверьте вручную",
-        "MRZ": "\n".join(mrz_lines) if mrz_lines else "Не обнаружена или отсутствует",
-        "Строки верхней страницы": upper_text,
-        "Строки нижней страницы": lower_text,
-        "Верхняя страница — независимый OCR": tesseract_data.get("Верхняя страница Tesseract") or "Tesseract недоступен",
-        "Нижняя страница — независимый OCR": tesseract_data.get("Нижняя страница Tesseract") or "Tesseract недоступен",
-    }
-
-    return {
+    # Промежуточный блок показывает те же итоговые значения, что и таблица.
+    # Сырые OCR-строки, MRZ и результаты отдельных движков пользователю не выводятся.
+    result = {
         "Фамилия": surname,
         "Имя": first_name,
         "Отчество": patronymic,
@@ -833,8 +818,10 @@ def parse_domestic_spread(img, reader):
         "Дата выдачи": issue_date,
         "Дата рождения": birth_date,
         "Источник": "OCR по координатам строк + MRZ при наличии; требуется ручная проверка",
-        "_Текст OCR": debug,
     }
+    result["_Текст OCR"] = {key: (value if value not in (None, "") else "Не распознано")
+                             for key, value in result.items()}
+    return result
 
 def parse_foreign(lines):
     # Fallback OCR-based extraction for foreign passport. MRZ parser can be extended
