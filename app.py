@@ -64,114 +64,70 @@ def to_images(uploaded):
         return pages
     return [Image.open(io.BytesIO(raw)).convert("RGB")]
 
-def enhance(img, scale=2):
-    img = img.convert("RGB")
-    img = img.resize((img.width * scale, img.height * scale), Image.Resampling.LANCZOS)
+def resize_for_ocr(img, max_side=1800):
+    """Ограничивает размер изображения, сохраняя пропорции."""
+    img = ImageOps.exif_transpose(img).convert("RGB")
+    longest = max(img.size)
+    if longest > max_side:
+        ratio = max_side / longest
+        img = img.resize((max(1, int(img.width * ratio)), max(1, int(img.height * ratio))), Image.Resampling.LANCZOS)
+    return img
+
+
+def enhance(img, scale=1):
+    img = resize_for_ocr(img)
+    if scale > 1:
+        img = img.resize((img.width * scale, img.height * scale), Image.Resampling.LANCZOS)
     img = ImageOps.grayscale(img)
     img = ImageOps.autocontrast(img)
-    img = ImageEnhance.Contrast(img).enhance(1.25)
-    img = img.filter(ImageFilter.SHARPEN)
+    img = ImageEnhance.Contrast(img).enhance(1.15)
     return img.convert("RGB")
 
+
 def ocr_image(reader, img, rotations=(0,)):
-    outputs = []
-    for angle in rotations:
-        current = img.rotate(angle, expand=True) if angle else img
-        arr = np.array(enhance(current, 2))
-        result = reader.readtext(arr, detail=1, paragraph=False)
-        for item in result:
-            if len(item) >= 3 and str(item[1]).strip():
-                outputs.append((str(item[1]).strip(), float(item[2])))
-    return outputs
+    """Один быстрый OCR-проход; дополнительные повороты не запускаются автоматически."""
+    current = resize_for_ocr(img)
+    if rotations and rotations[0] != 0:
+        current = current.rotate(rotations[0], expand=True)
+        current = resize_for_ocr(current)
+    result = reader.readtext(np.array(current), detail=1, paragraph=False)
+    return [(str(item[1]).strip(), float(item[2])) for item in result if len(item) >= 3 and str(item[1]).strip()]
 
 
 def read_digits_zone(reader, zone):
-    """
-    Читает красную вертикальную серию/номер на правом поле внутреннего паспорта.
-    Сохраняет отдельные варианты OCR и объединённую последовательность цифр.
-    """
-    candidates = []
-    rgb = zone.convert("RGB")
+    """Один проход распознавания цифровой зоны без трёх поворотов и увеличения x5."""
+    rgb = resize_for_ocr(zone, max_side=900)
     arr = np.array(rgb)
-
-    # Выделяем красные цифры, ослабляя влияние красного фона и линий бланка.
-    red_mask = (
-        (arr[:, :, 0] > 75)
-        & (arr[:, :, 0] > arr[:, :, 1] * 1.12)
-        & (arr[:, :, 0] > arr[:, :, 2] * 1.08)
-    )
+    red_mask = ((arr[:, :, 0] > 75) & (arr[:, :, 0] > arr[:, :, 1] * 1.12) & (arr[:, :, 0] > arr[:, :, 2] * 1.08))
     if red_mask.any():
-        masked = np.where(red_mask, 0, 255).astype(np.uint8)
-        base_img = Image.fromarray(masked).convert("RGB")
-    else:
-        base_img = rgb
-
-    variants = [
-        base_img,
-        base_img.rotate(90, expand=True),
-        base_img.rotate(270, expand=True),
-    ]
-
-    for variant in variants:
-        enlarged = variant.resize(
-            (variant.width * 5, variant.height * 5),
-            Image.Resampling.LANCZOS
-        )
-        result = reader.readtext(
-            np.array(enlarged),
-            detail=1,
-            paragraph=False,
-            allowlist="0123456789"
-        )
-
-        # Отдельные распознанные фрагменты.
-        fragments = []
-        for item in result:
-            if len(item) >= 3:
-                digits = re.sub(r"\D", "", str(item[1]))
-                if digits:
-                    fragments.append((digits, float(item[2])))
-                    candidates.append((digits, float(item[2])))
-
-        # EasyOCR иногда разбивает вертикальную серию и номер на несколько
-        # фрагментов. Объединяем их в порядке расположения сверху вниз/слева направо.
-        if fragments:
-            ordered = sorted(
-                result,
-                key=lambda item: (
-                    (min(pt[1] for pt in item[0]) + max(pt[1] for pt in item[0])) / 2,
-                    (min(pt[0] for pt in item[0]) + max(pt[0] for pt in item[0])) / 2
-                )
-            )
-            merged = "".join(
-                re.sub(r"\D", "", str(item[1]))
-                for item in ordered
-                if len(item) >= 3
-            )
-            merged = re.sub(r"\D", "", merged)
-            if len(merged) >= 8:
-                avg_conf = sum(conf for _, conf in fragments) / len(fragments)
-                candidates.append((merged, avg_conf))
-
+        arr = np.where(red_mask[:, :, None], 0, 255).astype(np.uint8)
+    result = reader.readtext(arr, detail=1, paragraph=False, allowlist="0123456789")
+    fragments = []
+    for item in result:
+        if len(item) >= 3:
+            digits = re.sub(r"\D", "", str(item[1]))
+            if digits:
+                fragments.append((digits, float(item[2])))
+    candidates = list(fragments)
+    if fragments:
+        ordered = sorted(result, key=lambda item: (
+            (min(pt[1] for pt in item[0]) + max(pt[1] for pt in item[0])) / 2,
+            (min(pt[0] for pt in item[0]) + max(pt[0] for pt in item[0])) / 2))
+        merged = "".join(re.sub(r"\D", "", str(item[1])) for item in ordered if len(item) >= 3)
+        if len(merged) >= 8:
+            candidates.append((merged, sum(x[1] for x in fragments) / len(fragments)))
     return candidates
 
+
 def extract_code_subdivision(reader, img):
-    # Код подразделения печатается справа от даты выдачи (формат XXX-XXX).
-    zone = crop_box(img, (0.54, 0.195, 0.82, 0.245))
+    """Считывает код подразделения одним проходом по его области."""
+    zone = crop_box(img, (0.48, 0.16, 0.88, 0.31))
     items = ocr_image(reader, zone)
     text = " ".join(t for t, _ in items)
-    match = re.search(r"(?<!\\d)(\\d{3})\\s*[-–—]?\\s*(\\d{3})(?!\\d)", text)
+    match = re.search(r"(?<!\d)(\d{3})\s*[-–—]?\s*(\d{3})(?!\d)", text)
     if match:
         return f"{match.group(1)}-{match.group(2)}", text
-
-    # Второй проход только по цифрам помогает, если дефис не распознан.
-    arr = np.array(enhance(zone, 4))
-    numeric = reader.readtext(arr, detail=1, paragraph=False, allowlist="0123456789")
-    digits = "".join(re.sub(r"\D", "", str(x[1])) for x in numeric if len(x) >= 2)
-    if len(digits) >= 6:
-        return f"{digits[:3]}-{digits[3:6]}", text
     return None, text
-
 
 def normalize_text(s):
     return re.sub(r"\s+", " ", str(s)).strip()
@@ -235,27 +191,17 @@ def clean_issuer_text(value):
     return value or None
 
 
-def ocr_multi(reader, img, rotations=(0, 90, 270), scales=(2, 3)):
-    """Несколько проходов OCR по исходному и улучшенному изображению."""
+def ocr_multi(reader, img, rotations=(0,), scales=(1,)):
+    """Совместимая обёртка: ровно один OCR-проход на изображении."""
+    current = resize_for_ocr(img, max_side=1800)
+    result = reader.readtext(np.array(current), detail=1, paragraph=False)
     found = []
-    seen = set()
-    for source in (img.convert("RGB"), enhance(img, 1)):
-        for angle in rotations:
-            current = source.rotate(angle, expand=True) if angle else source
-            for scale in scales:
-                enlarged = current.resize(
-                    (current.width * scale, current.height * scale),
-                    Image.Resampling.LANCZOS
-                )
-                result = reader.readtext(np.array(enlarged), detail=1, paragraph=False)
-                for item in result:
-                    if len(item) >= 3:
-                        value = normalize_text(item[1])
-                        if value and value.lower() not in seen:
-                            seen.add(value.lower())
-                            found.append((value, float(item[2])))
+    for item in result:
+        if len(item) >= 3:
+            value = normalize_text(item[1])
+            if value:
+                found.append((value, float(item[2])))
     return found
-
 
 def parse_domestic_spread(img, reader):
     """
@@ -263,11 +209,11 @@ def parse_domestic_spread(img, reader):
     Сначала OCR ищет текст на всём изображении, затем проверяет расширенные
     области. Это уменьшает зависимость от точных координат одного образца.
     """
-    img = ImageOps.exif_transpose(img).convert("RGB")
+    img = resize_for_ocr(img, max_side=1800)
     w, h = img.size
 
     # Полный OCR нужен как резерв, если поле смещено относительно шаблона.
-    full_items = ocr_multi(reader, img, rotations=(0, 90, 270), scales=(2,))
+    full_items = ocr_multi(reader, img)
     full_text = "\n".join(t for t, _ in full_items)
 
     # Набор широких зон с небольшим перекрытием. Координаты относительные,
@@ -305,21 +251,17 @@ def parse_domestic_spread(img, reader):
 
     def read_zone_candidates(boxes, numeric=False):
         candidates = []
-        for box in boxes:
-            zone = crop_box(img, box)
-            # Исходный цвет помогает читать красные/синие элементы бланка,
-            # улучшенная копия — бледную печать и слабый контраст.
-            for source in (zone, enhance(zone, 1)):
-                arr = np.array(source.resize(
-                    (source.width * 3, source.height * 3),
-                    Image.Resampling.LANCZOS
-                ))
-                kwargs = {"detail": 1, "paragraph": False}
-                if numeric:
-                    kwargs["allowlist"] = "0123456789.-/"
-                for item in reader.readtext(arr, **kwargs):
-                    if len(item) >= 3 and normalize_text(item[1]):
-                        candidates.append((normalize_text(item[1]), float(item[2])))
+        # Берём одну широкую область на поле и выполняем один OCR-проход.
+        # Перекрывающиеся повторные зоны и дублированные варианты изображения убраны.
+        box = boxes[0]
+        zone = resize_for_ocr(crop_box(img, box), max_side=1000)
+        arr = np.array(zone)
+        kwargs = {"detail": 1, "paragraph": False}
+        if numeric:
+            kwargs["allowlist"] = "0123456789.-/"
+        for item in reader.readtext(arr, **kwargs):
+            if len(item) >= 3 and normalize_text(item[1]):
+                candidates.append((normalize_text(item[1]), float(item[2])))
         return candidates
 
     texts = {}
@@ -403,7 +345,7 @@ def parse_domestic_spread(img, reader):
     # небольшой прямоугольник верхней страницы.
     serial_zone = crop_box(img, (0.78, 0.02, 1.0, 0.98))
     digit_candidates = read_digits_zone(reader, serial_zone)
-    serial_text_items = ocr_multi(reader, serial_zone, rotations=(0, 90, 270), scales=(2,))
+    serial_text_items = ocr_multi(reader, serial_zone)
     serial_text = "\n".join(t for t, _ in serial_text_items)
     series, number = parse_series_number_from_text(serial_text)
 
@@ -436,7 +378,7 @@ def parse_domestic_spread(img, reader):
         "Код подразделения": subdivision,
         "Дата выдачи": issue_date,
         "Дата рождения": birth_date,
-        "Источник": "Многопроходный OCR по всему изображению и областям; требуется проверка",
+        "Источник": "OCR с ограниченным числом проходов; требуется проверка",
         "_Текст OCR": texts,
     }
 
@@ -602,7 +544,8 @@ if uploads:
         uploads = [f for f in uploads if Path(f.name).suffix.lower() in allowed]
 
 if uploads and st.button("Распознать паспортные данные", type="primary"):
-    reader = get_reader()
+    with st.spinner("Загружаем модель распознавания при первом запуске…"):
+        reader = get_reader()
     rows = []
     for uploaded in uploads:
         try:
