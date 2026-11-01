@@ -522,10 +522,160 @@ def _date_candidates(items, y_min, y_max):
     return found
 
 
+
+def tesseract_domestic_fields(img):
+    """Дополнительное распознавание кириллических полей через Tesseract.
+
+    EasyOCR остаётся основным движком. Tesseract используется как независимая
+    проверка: он хорошо читает печатные кириллические строки на тестовом образце.
+    Если системный Tesseract или языковой пакет отсутствует, возвращает пустые поля.
+    """
+    result = {
+        "Фамилия": None, "Имя": None, "Отчество": None,
+        "Дата выдачи": None, "Код подразделения": None,
+        "Кем выдан (государственный орган)": None,
+        "Пол": None, "Дата рождения": None,
+        "Верхняя страница Tesseract": "", "Нижняя страница Tesseract": "",
+    }
+    try:
+        import pytesseract
+        from pytesseract import Output
+    except Exception:
+        return result
+
+    try:
+        work = ImageOps.exif_transpose(img).convert("RGB")
+        # Увеличиваем небольшой снимок, сохраняя пропорции.
+        scale = max(3, min(5, int(1800 / max(work.size))))
+        work = work.resize((work.width * scale, work.height * scale), Image.Resampling.LANCZOS)
+        w, h = work.size
+
+        # Верхняя страница: орган выдачи, дата выдачи и код подразделения.
+        top = work.crop((int(w * .04), int(h * .02), int(w * .96), int(h * .51)))
+        top_gray = ImageOps.autocontrast(ImageOps.grayscale(top))
+        top_gray = ImageEnhance.Contrast(top_gray).enhance(1.35)
+        top_text = pytesseract.image_to_string(
+            top_gray, lang="rus+eng", config="--oem 1 --psm 6"
+        )
+        result["Верхняя страница Tesseract"] = normalize_text(top_text.replace("\n", " | "))
+        date_match = re.search(r"(?<!\d)(\d{2})[.\-/ ](\d{2})[.\-/ ](\d{4})(?!\d)", top_text)
+        if date_match:
+            result["Дата выдачи"] = parse_date(".".join(date_match.groups()))
+        code_match = re.search(r"(?<!\d)(\d{3})\s*[-–— ]\s*(\d{3})(?!\d)", top_text)
+        if code_match:
+            result["Код подразделения"] = f"{code_match.group(1)}-{code_match.group(2)}"
+
+        lines = [normalize_text(x).upper() for x in top_text.splitlines() if normalize_text(x)]
+        issuer_lines = []
+        for line in lines:
+            compact = _compact_label(line)
+            # Отбрасываем шум перед названием учреждения и берём строку
+            # начиная с узнаваемого юридического фрагмента.
+            start = None
+            for anchor in ("ГУМВД", "МВД", "ОТДЕЛОМВНУТРЕННИХДЕЛ", "ОТДЕЛЕНИЕМВНУТРЕННИХДЕЛ", "ОТДЕЛОМ", "ОТДЕЛЕНИЕМ"):
+                pos = compact.find(anchor)
+                if pos >= 0:
+                    start = pos
+                    break
+            if start is not None:
+                # Сохраняем позицию в исходной строке приблизительно через
+                # последовательность букв/цифр, чтобы убрать начальный OCR-мусор.
+                letters_seen = 0
+                char_pos = 0
+                for char_pos, char in enumerate(line):
+                    if re.match(r"[А-ЯЁA-Z0-9]", char):
+                        if letters_seen >= start:
+                            break
+                        letters_seen += 1
+                line = line[char_pos:]
+            elif any(k in compact for k in ("КРАЮ", "ОКРУГА", "ГОРОДА")) and issuer_lines:
+                pass
+            else:
+                continue
+            line = re.sub(r"\d{2}[.\-/ ]\d{2}[.\-/ ]\d{4}", " ", line)
+            line = re.sub(r"\d{3}\s*[-–— ]\s*\d{3}", " ", line)
+            line = re.sub(r"ПАСПОРТ\s*ВЫДАН", " ", line)
+            line = re.sub(r"[<>|=]+", " ", line)
+            line = re.sub(r"\s+", " ", line).strip(" -:.")
+            if line and (not issuer_lines or line != issuer_lines[-1]):
+                issuer_lines.append(line)
+        if issuer_lines:
+            issuer = clean_issuer_text(" ".join(issuer_lines))
+            if issuer:
+                issuer = re.sub(r"РОССИН\b", "РОССИИ", issuer)
+                issuer = issuer.replace("РОССИИ.", "РОССИИ")
+                result["Кем выдан (государственный орган)"] = issuer
+
+        # Нижняя страница: берём слова с координатами, чтобы не смешивать
+        # фамилию/имя с датой рождения и местом рождения.
+        bottom_top = int(h * .49)
+        bottom_bottom = int(h * .88)
+        bottom = work.crop((int(w * .03), bottom_top, int(w * .97), bottom_bottom))
+        bottom_gray = ImageOps.autocontrast(ImageOps.grayscale(bottom))
+        bottom_gray = ImageEnhance.Contrast(bottom_gray).enhance(1.35)
+        data = pytesseract.image_to_data(
+            bottom_gray, lang="rus+eng", config="--oem 1 --psm 6", output_type=Output.DATAFRAME
+        )
+        if data is not None and not data.empty:
+            data = data[(data.conf > 20) & data.text.notna()]
+            data = data[data.text.astype(str).str.strip().ne("")]
+            candidates = []
+            excluded = {
+                "ФАМИЛИЯ", "ИМЯ", "ОТЧЕСТВО", "ПОЛ", "МУЖ", "ЖЕН", "МУЖ.", "ЖЕН.",
+                "МЕСТО", "РОЖДЕНИЯ", "РОССИЯ", "РОССИЙСКАЯ", "ФЕДЕРАЦИЯ", "ПАСПОРТ",
+                "Г", "Г.", "ГОРОД", "КРАЙ", "ГРУЗИЯ", "АРХАНГЕЛЬСК", "КРАСНОДАР"
+            }
+            bh = max(1, bottom.height)
+            bw = max(1, bottom.width)
+            for _, row in data.iterrows():
+                token = str(row.text).upper().replace("Ё", "Е").strip(" .,:;()[]{}")
+                if not re.fullmatch(r"[А-ЯA-Z-]{3,}", token):
+                    continue
+                if token in excluded:
+                    continue
+                cx = (float(row.left) + float(row.width) / 2) / bw
+                cy = (float(row.top) + float(row.height) / 2) / bh
+                # Значения ФИО печатаются правее подписей и выше строк пола/места рождения.
+                if cx < .38 or cy > .61:
+                    continue
+                candidates.append((cy, cx, token, float(row.conf)))
+
+            def pick_band(low, high, used=()):
+                band = [x for x in candidates if low <= x[0] < high and x[2] not in used]
+                if not band:
+                    return None
+                # Выбираем уверенное длинное слово, а не короткий шумовой фрагмент.
+                band.sort(key=lambda x: (x[3] + min(len(x[2]), 12) * 1.5, len(x[2])), reverse=True)
+                return band[0][2]
+
+            surname = pick_band(.12, .36)
+            given = pick_band(.36, .51, (surname,) if surname else ())
+            patronymic = pick_band(.46, .61, tuple(x for x in (surname, given) if x))
+            result["Фамилия"] = surname
+            result["Имя"] = given
+            result["Отчество"] = patronymic
+
+            # Пол и дата рождения извлекаются из нижней строки отдельно.
+            bottom_text = " ".join(str(x) for x in data.text.tolist())
+            upper_bottom = bottom_text.upper()
+            if re.search(r"\bЖЕН\b|\bЖЕНСКИЙ\b", upper_bottom):
+                result["Пол"] = "Женский"
+            elif re.search(r"\bМУЖ\b|\bМУЖСКОЙ\b", upper_bottom):
+                result["Пол"] = "Мужской"
+            birth = parse_date(bottom_text.replace("O", "0").replace("О", "0"))
+            if birth:
+                result["Дата рождения"] = birth
+            result["Нижняя страница Tesseract"] = normalize_text(bottom_text)
+    except Exception:
+        # Ошибка дополнительного OCR не должна ломать основной интерфейс.
+        return result
+    return result
+
 def parse_domestic_spread(img, reader):
     """Распознаёт разворот по координатам фактически найденных OCR-строк и связям с подписями."""
     img, items = _ocr_geometry(reader, img)
     rows = _group_ocr_rows(items)
+    tesseract_data = tesseract_domestic_fields(img)
     full_text = "\n".join(row["text"] for row in rows)
     upper_rows = [r for r in rows if r["y"] < 0.48]
     lower_rows = [r for r in rows if r["y"] >= 0.43]
@@ -547,13 +697,23 @@ def parse_domestic_spread(img, reader):
     surname_raw = _near_label_value(items, rows, "surname", 0.42, 0.88)
     given_raw = _near_label_value(items, rows, "given", 0.42, 0.90)
     patronymic_raw = _near_label_value(items, rows, "patronymic", 0.42, 0.90)
-    surname = mrz_data.get("Фамилия") or _clean_person_value(surname_raw, 1)
-    first_name = mrz_data.get("Имя") or _clean_person_value(given_raw, 1)
-    patronymic = _clean_person_value(patronymic_raw, 1)
+    # Кириллические значения с нижней страницы приоритетнее MRZ:
+    # MRZ содержит латинскую транслитерацию и сама может быть прочитана с ошибкой.
+    surname = (
+        _clean_person_value(surname_raw, 1)
+        or tesseract_data.get("Фамилия")
+        or mrz_data.get("Фамилия")
+    )
+    first_name = (
+        _clean_person_value(given_raw, 1)
+        or tesseract_data.get("Имя")
+        or mrz_data.get("Имя")
+    )
+    patronymic = _clean_person_value(patronymic_raw, 1) or tesseract_data.get("Отчество")
 
     gender_raw = _near_label_value(items, rows, "gender", 0.48, 0.92)
     gender_text = (gender_raw or "").upper()
-    gender = mrz_data.get("Пол")
+    gender = tesseract_data.get("Пол") or mrz_data.get("Пол")
     if not gender:
         if re.search(r"МУЖ|MALE|\bM\b", gender_text):
             gender = "Мужской"
@@ -562,8 +722,8 @@ def parse_domestic_spread(img, reader):
 
     birth_raw = _near_label_value(items, rows, "birth", 0.48, 0.95)
     issue_raw = _near_label_value(items, rows, "issue", 0.02, 0.48)
-    birth_date = mrz_data.get("Дата рождения") or parse_date(birth_raw or "")
-    issue_date = parse_date(issue_raw or "")
+    birth_date = tesseract_data.get("Дата рождения") or mrz_data.get("Дата рождения") or parse_date(birth_raw or "")
+    issue_date = tesseract_data.get("Дата выдачи") or parse_date(issue_raw or "")
 
     # Если подпись даты OCR не распознал, используем дату из соответствующей
     # половины документа, не смешивая дату рождения и выдачи.
@@ -609,7 +769,7 @@ def parse_domestic_spread(img, reader):
                 candidates.append((sum(map(len, letters)), text))
         issuer_raw = max(candidates, default=(0, None))[1]
 
-    issuer = clean_issuer_text(issuer_raw)
+    issuer = tesseract_data.get("Кем выдан (государственный орган)") or clean_issuer_text(issuer_raw)
     if issuer:
         issuer = re.sub(r"\b\d{2}[.\-/ ]\d{2}[.\-/ ]\d{4}\b", " ", issuer)
         issuer = re.sub(r"\b\d{3}\s*[-–—]\s*\d{3}\b", " ", issuer)
@@ -618,10 +778,16 @@ def parse_domestic_spread(img, reader):
             issuer = None
 
     subdivision_raw = _near_label_value(items, rows, "subdivision", 0.02, 0.48)
-    subdivision = None
+    # Отдельный OCR-проход по верхней странице раньше был объявлен,
+    # но не вызывался. Теперь используем его как резервный источник.
+    subdivision = tesseract_data.get("Код подразделения")
+    if not subdivision:
+        subdivision, subdivision_debug = extract_code_subdivision(reader, img)
+        if not subdivision_raw:
+            subdivision_raw = subdivision_debug
     sub_text = subdivision_raw or upper_text
     sub_match = re.search(r"(?<!\d)(\d{3})\s*[-–— ]\s*(\d{3})(?!\d)", sub_text)
-    if sub_match:
+    if sub_match and not subdivision:
         subdivision = f"{sub_match.group(1)}-{sub_match.group(2)}"
 
     # Серия/номер: сначала цифры, обнаруженные общим OCR у правого края,
@@ -651,6 +817,8 @@ def parse_domestic_spread(img, reader):
         "MRZ": "\n".join(mrz_lines) if mrz_lines else "Не обнаружена или отсутствует",
         "Строки верхней страницы": upper_text,
         "Строки нижней страницы": lower_text,
+        "Верхняя страница — независимый OCR": tesseract_data.get("Верхняя страница Tesseract") or "Tesseract недоступен",
+        "Нижняя страница — независимый OCR": tesseract_data.get("Нижняя страница Tesseract") or "Tesseract недоступен",
     }
 
     return {
