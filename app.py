@@ -320,30 +320,76 @@ def parse_vertical_document_number(reader, img):
 
 
 def _ocr_geometry(reader, img):
-    """Возвращает OCR-фрагменты с координатами в исходном масштабе изображения."""
+    """
+    Распознаёт разворот целиком и отдельно увеличенные области с полями.
+    Координаты всех найденных фрагментов возвращаются к масштабу исходного фото.
+    """
     work = resize_for_ocr(img, max_side=2200)
     w, h = work.size
-    raw = reader.readtext(np.array(work), detail=1, paragraph=False)
     items = []
-    for item in raw:
-        if len(item) < 3:
-            continue
-        text = normalize_text(item[1])
-        if not text:
-            continue
-        points = item[0]
-        xs = [float(p[0]) for p in points]
-        ys = [float(p[1]) for p in points]
-        x1, x2 = min(xs) / w, max(xs) / w
-        y1, y2 = min(ys) / h, max(ys) / h
-        items.append({
-            "text": text,
-            "conf": float(item[2]),
-            "x1": x1, "x2": x2, "y1": y1, "y2": y2,
-            "cx": (x1 + x2) / 2, "cy": (y1 + y2) / 2,
-            "height": max(0.002, y2 - y1),
-        })
-    return work, items
+
+    def add_detections(raw, source_w, source_h, x_offset=0, y_offset=0,
+                       crop_w=None, crop_h=None, scale=1.0):
+        crop_w = crop_w or source_w
+        crop_h = crop_h or source_h
+        for det in raw:
+            if len(det) < 3:
+                continue
+            text = normalize_text(det[1])
+            if not text:
+                continue
+            pts = det[0]
+            xs = [float(p[0]) for p in pts]
+            ys = [float(p[1]) for p in pts]
+            # Переводим координаты увеличенного фрагмента обратно в общий кадр.
+            x1 = (x_offset + min(xs) / scale) / w
+            x2 = (x_offset + max(xs) / scale) / w
+            y1 = (y_offset + min(ys) / scale) / h
+            y2 = (y_offset + max(ys) / scale) / h
+            items.append({
+                "text": text, "conf": float(det[2]),
+                "x1": x1, "x2": x2, "y1": y1, "y2": y2,
+                "cx": (x1 + x2) / 2, "cy": (y1 + y2) / 2,
+                "height": max(0.002, y2 - y1),
+            })
+
+    raw_full = reader.readtext(np.array(work), detail=1, paragraph=False)
+    add_detections(raw_full, w, h)
+
+    # Два дополнительных прохода по содержательным зонам. Они помогают,
+    # когда мелкие подписи и значения теряются при распознавании всего фото.
+    for box in ((0.035, 0.035, 0.97, 0.46), (0.035, 0.48, 0.97, 0.84)):
+        x1, y1, x2, y2 = box
+        left, top = int(w * x1), int(h * y1)
+        right, bottom = int(w * x2), int(h * y2)
+        crop = work.crop((left, top, right, bottom))
+        crop = ImageOps.autocontrast(ImageOps.grayscale(crop))
+        crop = ImageEnhance.Contrast(crop).enhance(1.2)
+        crop = crop.filter(ImageFilter.UnsharpMask(radius=1.2, percent=130, threshold=3))
+        scale = 1.5
+        crop = crop.resize(
+            (max(1, int(crop.width * scale)), max(1, int(crop.height * scale))),
+            Image.Resampling.LANCZOS
+        )
+        raw_crop = reader.readtext(np.array(crop.convert("RGB")), detail=1, paragraph=False)
+        add_detections(
+            raw_crop, crop.width, crop.height,
+            x_offset=left, y_offset=top,
+            crop_w=right-left, crop_h=bottom-top, scale=scale
+        )
+
+    # Убираем дубли одного и того же слова, оставляя более уверенное обнаружение.
+    unique = []
+    for item in sorted(items, key=lambda x: x["conf"], reverse=True):
+        duplicate = any(
+            item["text"].casefold() == old["text"].casefold()
+            and abs(item["cx"] - old["cx"]) < 0.012
+            and abs(item["cy"] - old["cy"]) < 0.012
+            for old in unique
+        )
+        if not duplicate:
+            unique.append(item)
+    return work, unique
 
 
 def _compact_label(text):
