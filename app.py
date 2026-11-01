@@ -319,158 +319,292 @@ def parse_vertical_document_number(reader, img):
     return candidate[:4], candidate[4:]
 
 
-
-def ocr_zone_text(reader, img, box, allowlist=None, scale=1.6):
-    """Распознаёт отдельную область документа после мягкой предобработки."""
-    zone = crop_box(resize_for_ocr(img, max_side=2200), box)
-    if zone.width < 2 or zone.height < 2:
-        return ""
-    zone = ImageOps.grayscale(zone)
-    zone = ImageOps.autocontrast(zone)
-    zone = ImageEnhance.Contrast(zone).enhance(1.25)
-    zone = zone.filter(ImageFilter.UnsharpMask(radius=1.2, percent=130, threshold=3))
-    if scale > 1:
-        zone = zone.resize(
-            (max(1, int(zone.width * scale)), max(1, int(zone.height * scale))),
-            Image.Resampling.LANCZOS,
-        )
-    kwargs = {"detail": 1, "paragraph": False}
-    if allowlist:
-        kwargs["allowlist"] = allowlist
-    found = reader.readtext(np.array(zone.convert("RGB")), **kwargs)
-    found = sorted(
-        found,
-        key=lambda item: (
-            sum(point[1] for point in item[0]) / len(item[0]),
-            min(point[0] for point in item[0]),
-        ),
-    )
-    return normalize_text(" ".join(str(item[1]) for item in found if len(item) >= 3))
-
-
-def clean_person_field(value, labels=()):
-    """Очищает OCR-значение персонального поля, не добавляя догадок."""
-    if not value:
-        return None
-    value = str(value).upper().replace("Ё", "Е")
-    for label in labels:
-        value = re.sub(rf"\b{label}\b", " ", value, flags=re.I)
-    value = re.sub(r"[^А-ЯA-Z\- ]", " ", value)
-    words = [w for w in normalize_text(value).split() if len(w) > 1]
-    ignored = {
-        "ФАМИЛИЯ", "ИМЯ", "ОТЧЕСТВО", "ПОЛ", "МУЖ", "ЖЕН",
-        "РОССИЙСКАЯ", "ФЕДЕРАЦИЯ", "ПАСПОРТ", "КРАЙ", "ГУ",
-        "ДАТА", "РОЖДЕНИЯ", "ВЫДАЧИ", "МЕСТО", "РОЖДЕНИЯ",
-    }
-    words = [w for w in words if w not in ignored]
-    return " ".join(words[:3]) or None
-
-
-def parse_domestic_spread(img, reader):
-    """
-    Универсальнее разбирает внутренний паспорт:
-    - использует общий OCR для расположения строк;
-    - отдельно читает области персональных данных и реквизитов;
-    - MRZ использует как дополнительный источник, но не требует её наличия.
-    """
-    img = resize_for_ocr(img, max_side=2200)
-    w, h = img.size
-
-    raw = reader.readtext(np.array(img), detail=1, paragraph=False)
-    positioned = []
+def _ocr_geometry(reader, img):
+    """Возвращает OCR-фрагменты с координатами в исходном масштабе изображения."""
+    work = resize_for_ocr(img, max_side=2200)
+    w, h = work.size
+    raw = reader.readtext(np.array(work), detail=1, paragraph=False)
+    items = []
     for item in raw:
         if len(item) < 3:
             continue
-        value = normalize_text(item[1])
-        if not value:
+        text = normalize_text(item[1])
+        if not text:
             continue
-        pts = item[0]
-        cx = sum(point[0] for point in pts) / len(pts)
-        cy = sum(point[1] for point in pts) / len(pts)
-        positioned.append((value, cx / w, cy / h, float(item[2])))
+        points = item[0]
+        xs = [float(p[0]) for p in points]
+        ys = [float(p[1]) for p in points]
+        x1, x2 = min(xs) / w, max(xs) / w
+        y1, y2 = min(ys) / h, max(ys) / h
+        items.append({
+            "text": text,
+            "conf": float(item[2]),
+            "x1": x1, "x2": x2, "y1": y1, "y2": y2,
+            "cx": (x1 + x2) / 2, "cy": (y1 + y2) / 2,
+            "height": max(0.002, y2 - y1),
+        })
+    return work, items
 
-    upper_text = "\n".join(v for v, x, y, score in positioned if y < 0.48)
-    lower_text = "\n".join(v for v, x, y, score in positioned if y >= 0.48)
 
-    # MRZ необязательна: в паспортах старых образцов её может не быть.
-    try:
-        mrz_data, mrz_lines = parse_mrz_domestic(reader, img)
-    except Exception:
-        mrz_data, mrz_lines = (
-            {"Фамилия": None, "Имя": None, "Пол": None, "Дата рождения": None},
-            [],
-        )
+def _compact_label(text):
+    return re.sub(r"[^А-ЯЁA-Z]", "", str(text).upper().replace("Ё", "Е"))
 
-    # Читаем поля в отдельных зонах. Координаты заданы относительно всего
-    # вертикального разворота; зоны захватывают типовые позиции разных образцов.
-    surname_zone = ocr_zone_text(reader, img, (0.37, 0.63, 0.94, 0.73))
-    first_name_zone = ocr_zone_text(reader, img, (0.37, 0.72, 0.94, 0.81))
-    patronymic_zone = ocr_zone_text(reader, img, (0.34, 0.79, 0.94, 0.88))
-    gender_birth_zone = ocr_zone_text(reader, img, (0.30, 0.83, 0.94, 0.94))
 
-    # Верхняя страница: реквизиты выдачи и дата/код находятся рядом,
-    # но распознаются раздельно, чтобы цифры не попадали в название органа.
-    issuer_zone = ocr_zone_text(reader, img, (0.18, 0.08, 0.90, 0.27))
-    issue_details_zone = ocr_zone_text(reader, img, (0.08, 0.24, 0.90, 0.38))
-    issue_date_zone = ocr_zone_text(reader, img, (0.08, 0.24, 0.53, 0.38))
-    subdivision_zone = ocr_zone_text(
-        reader, img, (0.48, 0.24, 0.91, 0.38), allowlist="0123456789-–— "
+def _group_ocr_rows(items):
+    """Группирует детекции по фактической вертикальной близости, не по координатам-шаблонам."""
+    rows = []
+    for item in sorted(items, key=lambda x: (x["cy"], x["x1"])):
+        best = None
+        best_dist = 1e9
+        for row in rows[-5:]:
+            avg_y = sum(x["cy"] for x in row["items"]) / len(row["items"])
+            avg_h = sum(x["height"] for x in row["items"]) / len(row["items"])
+            limit = max(0.008, avg_h * 0.85, item["height"] * 0.75)
+            dist = abs(item["cy"] - avg_y)
+            if dist <= limit and dist < best_dist:
+                best, best_dist = row, dist
+        if best is None:
+            rows.append({"items": [item]})
+        else:
+            best["items"].append(item)
+    for row in rows:
+        row["items"].sort(key=lambda x: x["x1"])
+        row["y"] = sum(x["cy"] for x in row["items"]) / len(row["items"])
+        row["text"] = normalize_text(" ".join(x["text"] for x in row["items"]))
+        row["x1"] = min(x["x1"] for x in row["items"])
+        row["x2"] = max(x["x2"] for x in row["items"])
+    return sorted(rows, key=lambda x: x["y"])
+
+
+def _label_kind(text):
+    value = _compact_label(text)
+    aliases = {
+        "surname": ("ФАМИЛИЯ",),
+        "given": ("ИМЯ",),
+        "patronymic": ("ОТЧЕСТВО",),
+        "gender": ("ПОЛ",),
+        "birth": ("ДАТАРОЖДЕНИЯ", "ДАТАРОЖД"),
+        "issue": ("ДАТАВЫДАЧИ",),
+        "issuer": ("ПАСПОРТВЫДАН", "ВЫДАН", "КЕМВЫДАН"),
+        "subdivision": ("КОДПОДРАЗДЕЛЕНИЯ", "КОДПОДРАЗД"),
+    }
+    for kind, variants in aliases.items():
+        if any(alias in value for alias in variants):
+            return kind
+    return None
+
+
+def _text_after_label(text, kind):
+    patterns = {
+        "surname": r"ФАМИЛИЯ", "given": r"ИМЯ", "patronymic": r"ОТЧЕСТВО",
+        "gender": r"ПОЛ", "birth": r"ДАТА\s*РОЖДЕНИЯ", "issue": r"ДАТА\s*ВЫДАЧИ",
+        "issuer": r"(?:ПАСПОРТ\s*)?ВЫДАН", "subdivision": r"КОД\s*ПОДРАЗДЕЛЕНИЯ",
+    }
+    return re.sub(patterns[kind], "", text, count=1, flags=re.I).strip(" :.-")
+
+
+def _near_label_value(items, rows, kind, y_min=0.0, y_max=1.0):
+    """Берёт ближайшую OCR-детекцию справа/рядом с найденной подписью поля."""
+    labels = [x for x in items if _label_kind(x["text"]) == kind and y_min <= x["cy"] <= y_max]
+    candidates = []
+    for label in labels:
+        inline = _text_after_label(label["text"], kind)
+        if len(re.sub(r"\W", "", inline)) >= 2:
+            candidates.append((0.0, inline, label["conf"]))
+        for item in items:
+            if item is label or not (y_min <= item["cy"] <= y_max):
+                continue
+            dy = abs(item["cy"] - label["cy"])
+            # Текст значения обычно справа от подписи на той же строке.
+            right = item["x1"] >= label["x2"] - 0.012
+            if right and dy <= max(0.025, label["height"] * 2.0):
+                dx = max(0.0, item["x1"] - label["x2"])
+                score = dy * 4 + dx * 0.35 - min(item["conf"], 1.0) * 0.006
+                candidates.append((score, item["text"], item["conf"]))
+        # Если значение стоит чуть выше подписи, учитываем соседнюю строку
+        # только при близком горизонтальном положении.
+        for item in items:
+            if item is label or not (y_min <= item["cy"] <= y_max):
+                continue
+            dy = abs(item["cy"] - label["cy"])
+            x_overlap = min(item["x2"], label["x2"] + 0.32) - max(item["x1"], label["x1"])
+            if dy <= 0.022 and x_overlap > 0:
+                score = 0.018 + dy * 4 - min(item["conf"], 1.0) * 0.004
+                candidates.append((score, item["text"], item["conf"]))
+    if not candidates:
+        # Резерв: строка OCR могла содержать подпись и значение одним блоком.
+        for row in rows:
+            if not (y_min <= row["y"] <= y_max):
+                continue
+            if _label_kind(row["text"]) == kind:
+                value = _text_after_label(row["text"], kind)
+                if value:
+                    candidates.append((0.03, value, 0.5))
+    if not candidates:
+        return None
+    candidates.sort(key=lambda x: x[0])
+    return candidates[0][1]
+
+
+def _clean_person_value(value, max_words=2):
+    if not value:
+        return None
+    value = str(value).upper().replace("Ё", "Е")
+    value = re.sub(r"[^А-ЯA-Z\- ]", " ", value)
+    ignored = {
+        "ФАМИЛИЯ", "ИМЯ", "ОТЧЕСТВО", "ПОЛ", "МУЖ", "ЖЕН", "МУЖСКОЙ", "ЖЕНСКИЙ",
+        "РОССИЙСКАЯ", "ФЕДЕРАЦИЯ", "ПАСПОРТ", "ДАТА", "РОЖДЕНИЯ", "ВЫДАЧИ",
+        "МЕСТО", "РОЖДЕНИЯ", "ГРУЗИЯ", "КРАЙ", "ГОРОД", "ГУ", "МВД"
+    }
+    words = [w for w in normalize_text(value).split() if len(w) >= 2 and w not in ignored]
+    if not words:
+        return None
+    # В полях российского паспорта обычно одно слово; второе оставляем лишь
+    # для двойных имён/фамилий, если оно не похоже на соседнюю подпись.
+    return " ".join(words[:max_words])
+
+
+def _date_candidates(items, y_min, y_max):
+    found = []
+    for item in items:
+        if not (y_min <= item["cy"] <= y_max):
+            continue
+        text = item["text"].replace("O", "0").replace("О", "0")
+        parsed = parse_date(text)
+        if parsed:
+            found.append((parsed, item["cx"], item["cy"], item["conf"]))
+    return found
+
+
+def parse_domestic_spread(img, reader):
+    """Распознаёт разворот по координатам фактически найденных OCR-строк и связям с подписями."""
+    img, items = _ocr_geometry(reader, img)
+    rows = _group_ocr_rows(items)
+    full_text = "\n".join(row["text"] for row in rows)
+    upper_rows = [r for r in rows if r["y"] < 0.48]
+    lower_rows = [r for r in rows if r["y"] >= 0.43]
+    upper_text = "\n".join(r["text"] for r in upper_rows)
+    lower_text = "\n".join(r["text"] for r in lower_rows)
+
+    # MRZ запускаем только если общий OCR заметил характерные угловые скобки
+    # или длинную латинско-цифровую строку в нижней части.
+    bottom_hint = any(
+        r["y"] > 0.72 and ("<<" in r["text"] or len(re.sub(r"[^A-Z0-9<]", "", r["text"].upper())) >= 22)
+        for r in rows
     )
+    if bottom_hint:
+        mrz_data, mrz_lines = parse_mrz_domestic(reader, img)
+    else:
+        mrz_data = {"Фамилия": None, "Имя": None, "Пол": None, "Дата рождения": None}
+        mrz_lines = []
 
-    surname = clean_person_field(surname_zone, ("ФАМИЛИЯ",))
-    first_name = clean_person_field(first_name_zone, ("ИМЯ",))
-    patronymic = clean_person_field(patronymic_zone, ("ОТЧЕСТВО",))
+    surname_raw = _near_label_value(items, rows, "surname", 0.42, 0.88)
+    given_raw = _near_label_value(items, rows, "given", 0.42, 0.90)
+    patronymic_raw = _near_label_value(items, rows, "patronymic", 0.42, 0.90)
+    surname = mrz_data.get("Фамилия") or _clean_person_value(surname_raw, 1)
+    first_name = mrz_data.get("Имя") or _clean_person_value(given_raw, 1)
+    patronymic = _clean_person_value(patronymic_raw, 1)
 
-    # MRZ часто надёжнее для даты рождения и пола; персональные имена
-    # из кириллической страницы предпочтительнее латинской транслитерации.
-    surname = surname or mrz_data.get("Фамилия")
-    first_name = first_name or mrz_data.get("Имя")
+    gender_raw = _near_label_value(items, rows, "gender", 0.48, 0.92)
+    gender_text = (gender_raw or "").upper()
     gender = mrz_data.get("Пол")
     if not gender:
-        gender_match = re.search(r"\b(МУЖ|ЖЕН)\w*", gender_birth_zone.upper())
-        if gender_match:
-            gender = "Мужской" if gender_match.group(1) == "МУЖ" else "Женский"
+        if re.search(r"МУЖ|MALE|\bM\b", gender_text):
+            gender = "Мужской"
+        elif re.search(r"ЖЕН|FEMALE|\bF\b", gender_text):
+            gender = "Женский"
 
-    issue_date = parse_date(issue_date_zone) or parse_date(upper_text)
-    birth_date = mrz_data.get("Дата рождения") or parse_date(gender_birth_zone) or parse_date(lower_text)
+    birth_raw = _near_label_value(items, rows, "birth", 0.48, 0.95)
+    issue_raw = _near_label_value(items, rows, "issue", 0.02, 0.48)
+    birth_date = mrz_data.get("Дата рождения") or parse_date(birth_raw or "")
+    issue_date = parse_date(issue_raw or "")
 
-    issuer_source = issuer_zone or upper_text
-    issuer = clean_issuer_text(issuer_source)
+    # Если подпись даты OCR не распознал, используем дату из соответствующей
+    # половины документа, не смешивая дату рождения и выдачи.
+    if not issue_date:
+        dates = _date_candidates(items, 0.02, 0.46)
+        if dates:
+            issue_date = max(dates, key=lambda x: (x[3], -abs(x[2] - 0.27)))[0]
+    if not birth_date:
+        dates = _date_candidates(items, 0.48, 0.94)
+        if dates:
+            birth_date = max(dates, key=lambda x: (x[3], -abs(x[2] - 0.78)))[0]
+
+    # Орган выдачи: ищем текстовые строки рядом с меткой «Паспорт выдан».
+    issuer_label_items = [x for x in items if _label_kind(x["text"]) == "issuer" and x["cy"] < 0.46]
+    issuer_parts = []
+    if issuer_label_items:
+        label = min(issuer_label_items, key=lambda x: x["cy"])
+        for item in items:
+            if item is label or item["cy"] >= 0.44:
+                continue
+            dy = item["cy"] - label["cy"]
+            if -0.015 <= dy <= 0.13 and item["x2"] > label["x1"] + 0.08:
+                candidate = item["text"]
+                if parse_date(candidate) or re.search(r"\b\d{3}\s*[-–—]\s*\d{3}\b", candidate):
+                    continue
+                if _label_kind(candidate) in {"issue", "subdivision"}:
+                    continue
+                issuer_parts.append((item["cy"], item["x1"], candidate, item["conf"]))
+    if issuer_parts:
+        issuer_raw = " ".join(x[2] for x in sorted(issuer_parts, key=lambda x: (x[0], x[1])))
+    else:
+        # Fallback: только длинные текстовые строки верхней страницы;
+        # дату, номер кода и заголовки исключаем.
+        candidates = []
+        for row in upper_rows:
+            text = row["text"]
+            compact = _compact_label(text)
+            if any(k in compact for k in ("РОССИЙСКАЯФЕДЕРАЦИЯ", "ПАСПОРТВЫДАН", "ДАТАВЫДАЧИ", "КОДПОДРАЗДЕЛЕНИЯ")):
+                continue
+            text_wo_digits = re.sub(r"\d|[./,:-]", "", text)
+            letters = re.findall(r"[А-ЯЁA-Z]{2,}", text_wo_digits.upper())
+            if sum(map(len, letters)) >= 12:
+                candidates.append((sum(map(len, letters)), text))
+        issuer_raw = max(candidates, default=(0, None))[1]
+
+    issuer = clean_issuer_text(issuer_raw)
     if issuer:
         issuer = re.sub(r"\b\d{2}[.\-/ ]\d{2}[.\-/ ]\d{4}\b", " ", issuer)
         issuer = re.sub(r"\b\d{3}\s*[-–—]\s*\d{3}\b", " ", issuer)
-        issuer = re.sub(r"\s+", " ", issuer).strip(" -.,")
-        if len(issuer) < 8:
+        issuer = normalize_text(issuer)
+        if len(re.sub(r"[^А-ЯЁ]", "", issuer)) < 8:
             issuer = None
 
-    # Серия и номер: сначала вертикальная красная надпись, затем общий OCR.
-    series, number = parse_vertical_document_number(reader, img)
-    if not series or not number:
-        right_side = " ".join(
-            value for value, x, y, score in positioned if x > 0.84
-        )
-        fallback_series, fallback_number = parse_series_number_from_text(right_side)
-        series = series or fallback_series
-        number = number or fallback_number
-
-    # Код подразделения ищем только в зоне его печати и верхнем блоке.
+    subdivision_raw = _near_label_value(items, rows, "subdivision", 0.02, 0.48)
     subdivision = None
-    for source in (subdivision_zone, issue_details_zone, upper_text):
-        match = re.search(r"(?<!\d)(\d{3})\s*[-–— ]\s*(\d{3})(?!\d)", source)
-        if match:
-            subdivision = f"{match.group(1)}-{match.group(2)}"
-            break
+    sub_text = subdivision_raw or upper_text
+    sub_match = re.search(r"(?<!\d)(\d{3})\s*[-–— ]\s*(\d{3})(?!\d)", sub_text)
+    if sub_match:
+        subdivision = f"{sub_match.group(1)}-{sub_match.group(2)}"
+
+    # Серия/номер: сначала цифры, обнаруженные общим OCR у правого края,
+    # затем один отдельный вертикальный проход как резерв.
+    right_digits = []
+    for item in items:
+        if item["cx"] > 0.82:
+            digits = re.sub(r"\D", "", item["text"].replace("О", "0").replace("O", "0"))
+            if digits:
+                right_digits.append((item["cy"], digits, item["conf"]))
+    right_digits.sort(key=lambda x: x[0])
+    digit_stream = "".join(x[1] for x in right_digits)
+    series, number = parse_series_number_from_text(" ".join(x[1] for x in right_digits))
+    if not series or not number:
+        series, number = parse_vertical_document_number(reader, img)
 
     debug = {
-        "Орган выдачи (область)": issuer_zone or "Не распознано",
-        "Дата и код (область)": issue_details_zone or "Не распознано",
-        "Фамилия (область)": surname_zone or "Не распознано",
-        "Имя (область)": first_name_zone or "Не распознано",
-        "Отчество (область)": patronymic_zone or "Не распознано",
-        "Пол и дата рождения (область)": gender_birth_zone or "Не распознано",
-        "MRZ": "\n".join(mrz_lines) if mrz_lines else "Отсутствует или не распознана",
-        "Текст верхней страницы": upper_text,
-        "Текст нижней страницы": lower_text,
+        "Орган выдачи (по строкам)": issuer_raw or "Не распознано",
+        "Дата выдачи (рядом с подписью)": issue_raw or "Не распознано",
+        "Фамилия (рядом с подписью)": surname_raw or "Не распознано",
+        "Имя (рядом с подписью)": given_raw or "Не распознано",
+        "Отчество (рядом с подписью)": patronymic_raw or "Не распознано",
+        "Пол (рядом с подписью)": gender_raw or "Не распознано",
+        "Дата рождения (рядом с подписью)": birth_raw or "Не распознано",
+        "Серия документа": series or "Не распознана — проверьте вручную",
+        "Номер документа": number or "Не распознан — проверьте вручную",
+        "MRZ": "\n".join(mrz_lines) if mrz_lines else "Не обнаружена или отсутствует",
+        "Строки верхней страницы": upper_text,
+        "Строки нижней страницы": lower_text,
     }
 
     return {
@@ -484,10 +618,9 @@ def parse_domestic_spread(img, reader):
         "Код подразделения": subdivision,
         "Дата выдачи": issue_date,
         "Дата рождения": birth_date,
-        "Источник": "OCR по областям + MRZ при наличии; требуется ручная проверка",
+        "Источник": "OCR по координатам строк + MRZ при наличии; требуется ручная проверка",
         "_Текст OCR": debug,
     }
-
 
 def parse_foreign(lines):
     # Fallback OCR-based extraction for foreign passport. MRZ parser can be extended
@@ -690,9 +823,9 @@ if uploads and st.button("Распознать паспортные данные
 with st.expander("Ограничения и безопасность"):
     st.write(
         "Это учебный прототип, а не средство проверки подлинности документа. "
-        "Распознавание по областям рассчитано на фотографию открытого разворота внутреннего паспорта "
-        "с расположением страниц, похожим на тестовый шаблон. Для других ракурсов и шаблонов точность "
-        "может снизиться. Загранпаспорт обрабатывается отдельно через MRZ, если зона распознана. "
+        "Внутренний паспорт обрабатывается по координатам найденных OCR-строк и подписям полей; "
+        "MRZ используется дополнительно, если присутствует. Разные ракурсы, качество снимка и старые "
+        "образцы могут влиять на точность. Загранпаспорт обрабатывается отдельно через MRZ, если зона распознана. "
         "Для внутреннего паспорта РФ выводится код подразделения; дата окончания действия не включается, поскольку она не печатается в документе. "
         "Не используйте результаты без ручной проверки и не загружайте реальные паспорта в публичное приложение."
     )
