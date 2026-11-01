@@ -319,18 +319,64 @@ def parse_vertical_document_number(reader, img):
     return candidate[:4], candidate[4:]
 
 
+
+def ocr_zone_text(reader, img, box, allowlist=None, scale=1.6):
+    """Распознаёт отдельную область документа после мягкой предобработки."""
+    zone = crop_box(resize_for_ocr(img, max_side=2200), box)
+    if zone.width < 2 or zone.height < 2:
+        return ""
+    zone = ImageOps.grayscale(zone)
+    zone = ImageOps.autocontrast(zone)
+    zone = ImageEnhance.Contrast(zone).enhance(1.25)
+    zone = zone.filter(ImageFilter.UnsharpMask(radius=1.2, percent=130, threshold=3))
+    if scale > 1:
+        zone = zone.resize(
+            (max(1, int(zone.width * scale)), max(1, int(zone.height * scale))),
+            Image.Resampling.LANCZOS,
+        )
+    kwargs = {"detail": 1, "paragraph": False}
+    if allowlist:
+        kwargs["allowlist"] = allowlist
+    found = reader.readtext(np.array(zone.convert("RGB")), **kwargs)
+    found = sorted(
+        found,
+        key=lambda item: (
+            sum(point[1] for point in item[0]) / len(item[0]),
+            min(point[0] for point in item[0]),
+        ),
+    )
+    return normalize_text(" ".join(str(item[1]) for item in found if len(item) >= 3))
+
+
+def clean_person_field(value, labels=()):
+    """Очищает OCR-значение персонального поля, не добавляя догадок."""
+    if not value:
+        return None
+    value = str(value).upper().replace("Ё", "Е")
+    for label in labels:
+        value = re.sub(rf"\b{label}\b", " ", value, flags=re.I)
+    value = re.sub(r"[^А-ЯA-Z\- ]", " ", value)
+    words = [w for w in normalize_text(value).split() if len(w) > 1]
+    ignored = {
+        "ФАМИЛИЯ", "ИМЯ", "ОТЧЕСТВО", "ПОЛ", "МУЖ", "ЖЕН",
+        "РОССИЙСКАЯ", "ФЕДЕРАЦИЯ", "ПАСПОРТ", "КРАЙ", "ГУ",
+        "ДАТА", "РОЖДЕНИЯ", "ВЫДАЧИ", "МЕСТО", "РОЖДЕНИЯ",
+    }
+    words = [w for w in words if w not in ignored]
+    return " ".join(words[:3]) or None
+
+
 def parse_domestic_spread(img, reader):
     """
-    Разбирает разворот российского внутреннего паспорта.
-    Использует один общий OCR-проход, отдельную проверку MRZ и отдельное
-    чтение вертикального номера. Ненадёжные поля остаются пустыми.
+    Универсальнее разбирает внутренний паспорт:
+    - использует общий OCR для расположения строк;
+    - отдельно читает области персональных данных и реквизитов;
+    - MRZ использует как дополнительный источник, но не требует её наличия.
     """
-    img = resize_for_ocr(img, max_side=1800)
+    img = resize_for_ocr(img, max_side=2200)
     w, h = img.size
 
-    # Один общий проход сохраняет координаты, чтобы не смешивать соседние поля.
     raw = reader.readtext(np.array(img), detail=1, paragraph=False)
-    full_items = []
     positioned = []
     for item in raw:
         if len(item) < 3:
@@ -341,109 +387,88 @@ def parse_domestic_spread(img, reader):
         pts = item[0]
         cx = sum(point[0] for point in pts) / len(pts)
         cy = sum(point[1] for point in pts) / len(pts)
-        full_items.append((value, float(item[2])))
         positioned.append((value, cx / w, cy / h, float(item[2])))
 
-    full_text = "\n".join(value for value, _ in full_items)
-    upper_text = "\n".join(value for value, x, y, score in positioned if y < 0.48)
-    lower_text = "\n".join(value for value, x, y, score in positioned if y >= 0.45)
+    upper_text = "\n".join(v for v, x, y, score in positioned if y < 0.48)
+    lower_text = "\n".join(v for v, x, y, score in positioned if y >= 0.48)
 
-    # MRZ — наиболее надёжный источник для имени, пола и даты рождения.
-    mrz_data, mrz_lines = parse_mrz_domestic(reader, img)
+    # MRZ необязательна: в паспортах старых образцов её может не быть.
+    try:
+        mrz_data, mrz_lines = parse_mrz_domestic(reader, img)
+    except Exception:
+        mrz_data, mrz_lines = (
+            {"Фамилия": None, "Имя": None, "Пол": None, "Дата рождения": None},
+            [],
+        )
 
-    def clean_name(value):
-        if not value:
-            return None
-        value = re.sub(r"[^А-ЯЁа-яёA-Za-z\- ]", " ", str(value))
-        words = [word for word in normalize_text(value).split() if len(word) > 1]
-        ignored = {
-            "ФАМИЛИЯ", "ИМЯ", "ОТЧЕСТВО", "ПОЛ", "МУЖ", "ЖЕН",
-            "РОССИЙСКАЯ", "ФЕДЕРАЦИЯ", "ПАСПОРТ", "КРАЙ", "ГУ",
-            "ДАТА", "РОЖДЕНИЯ", "ВЫДАЧИ"
-        }
-        words = [word for word in words if word.upper() not in ignored]
-        return " ".join(words[:2]) or None
+    # Читаем поля в отдельных зонах. Координаты заданы относительно всего
+    # вертикального разворота; зоны захватывают типовые позиции разных образцов.
+    surname_zone = ocr_zone_text(reader, img, (0.37, 0.63, 0.94, 0.73))
+    first_name_zone = ocr_zone_text(reader, img, (0.37, 0.72, 0.94, 0.81))
+    patronymic_zone = ocr_zone_text(reader, img, (0.34, 0.79, 0.94, 0.88))
+    gender_birth_zone = ocr_zone_text(reader, img, (0.30, 0.83, 0.94, 0.94))
 
-    # Если MRZ прочитана, используем её. Иначе ищем значения рядом с подписями,
-    # но не подставляем произвольный текст из соседних строк.
-    def value_after_label(label, source):
-        lines = [normalize_text(line) for line in source.splitlines() if normalize_text(line)]
-        for index, line in enumerate(lines):
-            match = re.search(label + r"\s*[:\-]?\s*(.*)$", line, re.I)
-            if match:
-                value = match.group(1).strip(" :.-")
-                if len(value) > 1:
-                    return value
-                if index + 1 < len(lines):
-                    next_line = lines[index + 1]
-                    if len(next_line) > 1 and not re.search(r"ФАМИЛИЯ|ИМЯ|ОТЧЕСТВО|ПОЛ|ДАТА", next_line, re.I):
-                        return next_line
-        return None
+    # Верхняя страница: реквизиты выдачи и дата/код находятся рядом,
+    # но распознаются раздельно, чтобы цифры не попадали в название органа.
+    issuer_zone = ocr_zone_text(reader, img, (0.18, 0.08, 0.90, 0.27))
+    issue_details_zone = ocr_zone_text(reader, img, (0.08, 0.24, 0.90, 0.38))
+    issue_date_zone = ocr_zone_text(reader, img, (0.08, 0.24, 0.53, 0.38))
+    subdivision_zone = ocr_zone_text(
+        reader, img, (0.48, 0.24, 0.91, 0.38), allowlist="0123456789-–— "
+    )
 
-    surname = mrz_data["Фамилия"] or clean_name(value_after_label(r"ФАМИЛИЯ", lower_text))
-    first_name = mrz_data["Имя"] or clean_name(value_after_label(r"ИМЯ", lower_text))
-    patronymic = clean_name(value_after_label(r"ОТЧЕСТВО", lower_text))
+    surname = clean_person_field(surname_zone, ("ФАМИЛИЯ",))
+    first_name = clean_person_field(first_name_zone, ("ИМЯ",))
+    patronymic = clean_person_field(patronymic_zone, ("ОТЧЕСТВО",))
 
-    gender = mrz_data["Пол"]
+    # MRZ часто надёжнее для даты рождения и пола; персональные имена
+    # из кириллической страницы предпочтительнее латинской транслитерации.
+    surname = surname or mrz_data.get("Фамилия")
+    first_name = first_name or mrz_data.get("Имя")
+    gender = mrz_data.get("Пол")
     if not gender:
-        gender_text = lower_text.upper()
-        if re.search(r"\bМУЖ", gender_text):
-            gender = "Мужской"
-        elif re.search(r"\bЖЕН", gender_text):
-            gender = "Женский"
+        gender_match = re.search(r"\b(МУЖ|ЖЕН)\w*", gender_birth_zone.upper())
+        if gender_match:
+            gender = "Мужской" if gender_match.group(1) == "МУЖ" else "Женский"
 
-    # Даты верхней и нижней частей не смешиваем: дата выдачи берётся сверху,
-    # дата рождения — прежде всего из MRZ.
-    date_pattern = r"(?<!\d)(\d{2}[.\-/ ]\d{2}[.\-/ ]\d{4})(?!\d)"
-    upper_dates = re.findall(date_pattern, upper_text)
-    issue_date = parse_date(upper_text)
-    if not issue_date and upper_dates:
-        issue_date = parse_date(upper_dates[0])
+    issue_date = parse_date(issue_date_zone) or parse_date(upper_text)
+    birth_date = mrz_data.get("Дата рождения") or parse_date(gender_birth_zone) or parse_date(lower_text)
 
-    birth_date = mrz_data["Дата рождения"]
-    if not birth_date:
-        lower_dates = re.findall(date_pattern, lower_text)
-        parsed_lower = [parse_date(value) for value in lower_dates]
-        parsed_lower = [value for value in parsed_lower if value]
-        if parsed_lower:
-            birth_date = min(parsed_lower, key=lambda value: datetime.strptime(value, "%d.%m.%Y"))
-
-    issuer = clean_issuer_text(upper_text)
+    issuer_source = issuer_zone or upper_text
+    issuer = clean_issuer_text(issuer_source)
     if issuer:
-        # Убираем дату и короткие цифровые фрагменты из названия органа.
-        issuer = re.sub(date_pattern, " ", issuer)
-        issuer = re.sub(r"\b\d{3}[- ]?\d{3}\b", " ", issuer)
-        issuer = normalize_text(issuer)
+        issuer = re.sub(r"\b\d{2}[.\-/ ]\d{2}[.\-/ ]\d{4}\b", " ", issuer)
+        issuer = re.sub(r"\b\d{3}\s*[-–—]\s*\d{3}\b", " ", issuer)
+        issuer = re.sub(r"\s+", " ", issuer).strip(" -.,")
         if len(issuer) < 8:
             issuer = None
-    if not issuer:
-        issuer = clean_issuer_text(value_after_label(
-            r"(?:ГУ\s*МВД|УМВД|ОВД|ОРГАН\s+ВЫДАЧИ)", upper_text
-        ))
 
+    # Серия и номер: сначала вертикальная красная надпись, затем общий OCR.
     series, number = parse_vertical_document_number(reader, img)
     if not series or not number:
-        # Резерв: ищем последовательность 4+6 цифр в общем OCR.
-        series_text = " ".join(value for value, x, y, score in positioned if x > 0.82)
-        series, number = parse_series_number_from_text(series_text)
+        right_side = " ".join(
+            value for value, x, y, score in positioned if x > 0.84
+        )
+        fallback_series, fallback_number = parse_series_number_from_text(right_side)
+        series = series or fallback_series
+        number = number or fallback_number
 
-    # Код подразделения обычно имеет формат XXX-XXX и находится на верхней странице.
+    # Код подразделения ищем только в зоне его печати и верхнем блоке.
     subdivision = None
-    sub_match = re.search(r"(?<!\d)(\d{3})\s*[-–—]\s*(\d{3})(?!\d)", upper_text)
-    if sub_match:
-        subdivision = f"{sub_match.group(1)}-{sub_match.group(2)}"
+    for source in (subdivision_zone, issue_details_zone, upper_text):
+        match = re.search(r"(?<!\d)(\d{3})\s*[-–— ]\s*(\d{3})(?!\d)", source)
+        if match:
+            subdivision = f"{match.group(1)}-{match.group(2)}"
+            break
 
     debug = {
-        "Орган выдачи": issuer,
-        "Дата выдачи": issue_date,
-        "Фамилия": surname,
-        "Имя": first_name,
-        "Отчество": patronymic,
-        "Пол": gender,
-        "Дата рождения": birth_date,
-        "Серия документа": series or "Не распознана — проверьте вручную",
-        "Номер документа": number or "Не распознан — проверьте вручную",
-        "MRZ": "\n".join(mrz_lines) if mrz_lines else "Не распознана",
+        "Орган выдачи (область)": issuer_zone or "Не распознано",
+        "Дата и код (область)": issue_details_zone or "Не распознано",
+        "Фамилия (область)": surname_zone or "Не распознано",
+        "Имя (область)": first_name_zone or "Не распознано",
+        "Отчество (область)": patronymic_zone or "Не распознано",
+        "Пол и дата рождения (область)": gender_birth_zone or "Не распознано",
+        "MRZ": "\n".join(mrz_lines) if mrz_lines else "Отсутствует или не распознана",
         "Текст верхней страницы": upper_text,
         "Текст нижней страницы": lower_text,
     }
@@ -459,7 +484,7 @@ def parse_domestic_spread(img, reader):
         "Код подразделения": subdivision,
         "Дата выдачи": issue_date,
         "Дата рождения": birth_date,
-        "Источник": "OCR + проверка MRZ; требуется ручная проверка",
+        "Источник": "OCR по областям + MRZ при наличии; требуется ручная проверка",
         "_Текст OCR": debug,
     }
 
