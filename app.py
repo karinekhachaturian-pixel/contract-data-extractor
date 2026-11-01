@@ -235,111 +235,195 @@ def clean_issuer_text(value):
     return value or None
 
 
+def ocr_multi(reader, img, rotations=(0, 90, 270), scales=(2, 3)):
+    """Несколько проходов OCR по исходному и улучшенному изображению."""
+    found = []
+    seen = set()
+    for source in (img.convert("RGB"), enhance(img, 1)):
+        for angle in rotations:
+            current = source.rotate(angle, expand=True) if angle else source
+            for scale in scales:
+                enlarged = current.resize(
+                    (current.width * scale, current.height * scale),
+                    Image.Resampling.LANCZOS
+                )
+                result = reader.readtext(np.array(enlarged), detail=1, paragraph=False)
+                for item in result:
+                    if len(item) >= 3:
+                        value = normalize_text(item[1])
+                        if value and value.lower() not in seen:
+                            seen.add(value.lower())
+                            found.append((value, float(item[2])))
+    return found
+
+
 def parse_domestic_spread(img, reader):
     """
-    Распознавание открытого разворота внутреннего паспорта по узким зонам.
-    Координаты рассчитаны под тестовый образец 960x1328; для других кадров
-    потребуется выравнивание/настройка зон.
+    Универсальный многопроходный разбор открытого разворота.
+    Сначала OCR ищет текст на всём изображении, затем проверяет расширенные
+    области. Это уменьшает зависимость от точных координат одного образца.
     """
-    # Верхняя страница: только строки наименования органа, без даты и кода.
-    issuer_zone = crop_box(img, (0.27, 0.085, 0.84, 0.205))
-    issue_date_zone = crop_box(img, (0.13, 0.195, 0.39, 0.245))
+    img = ImageOps.exif_transpose(img).convert("RGB")
+    w, h = img.size
 
-    # Нижняя страница: вырезаем именно значения справа от подписей.
-    surname_zone = crop_box(img, (0.47, 0.545, 0.78, 0.585))
-    name_zone = crop_box(img, (0.49, 0.625, 0.79, 0.665))
-    patronymic_zone = crop_box(img, (0.42, 0.665, 0.80, 0.705))
-    gender_zone = crop_box(img, (0.35, 0.705, 0.49, 0.745))
-    birth_date_zone = crop_box(img, (0.56, 0.705, 0.80, 0.75))
+    # Полный OCR нужен как резерв, если поле смещено относительно шаблона.
+    full_items = ocr_multi(reader, img, rotations=(0, 90, 270), scales=(2,))
+    full_text = "\n".join(t for t, _ in full_items)
 
-    # Серия и номер печатаются вертикально на правом краю разворота.
-    # Обрабатываем верхний и нижний сегменты отдельно, чтобы не склеивать повторы.
-    serial_top_zone = crop_box(img, (0.905, 0.105, 0.995, 0.405))
-    serial_bottom_zone = crop_box(img, (0.905, 0.665, 0.995, 0.91))
-
-    zones = {
-        "Орган выдачи": issuer_zone,
-        "Дата выдачи": issue_date_zone,
-        "Фамилия": surname_zone,
-        "Имя": name_zone,
-        "Отчество": patronymic_zone,
-        "Пол": gender_zone,
-        "Дата рождения": birth_date_zone,
+    # Набор широких зон с небольшим перекрытием. Координаты относительные,
+    # поэтому подходят для разных разрешений и пропорций снимка.
+    zone_specs = {
+        "Орган выдачи": [
+            (0.12, 0.06, 0.94, 0.34),
+            (0.08, 0.08, 0.96, 0.40),
+        ],
+        "Дата выдачи": [
+            (0.05, 0.12, 0.62, 0.38),
+            (0.05, 0.08, 0.72, 0.42),
+        ],
+        "Фамилия": [
+            (0.30, 0.48, 0.96, 0.65),
+            (0.24, 0.50, 0.98, 0.68),
+        ],
+        "Имя": [
+            (0.30, 0.56, 0.96, 0.75),
+            (0.24, 0.55, 0.98, 0.76),
+        ],
+        "Отчество": [
+            (0.24, 0.61, 0.98, 0.80),
+            (0.20, 0.60, 0.98, 0.82),
+        ],
+        "Пол": [
+            (0.20, 0.65, 0.62, 0.83),
+            (0.15, 0.64, 0.70, 0.85),
+        ],
+        "Дата рождения": [
+            (0.42, 0.64, 0.98, 0.85),
+            (0.36, 0.62, 0.99, 0.87),
+        ],
     }
+
+    def read_zone_candidates(boxes, numeric=False):
+        candidates = []
+        for box in boxes:
+            zone = crop_box(img, box)
+            # Исходный цвет помогает читать красные/синие элементы бланка,
+            # улучшенная копия — бледную печать и слабый контраст.
+            for source in (zone, enhance(zone, 1)):
+                arr = np.array(source.resize(
+                    (source.width * 3, source.height * 3),
+                    Image.Resampling.LANCZOS
+                ))
+                kwargs = {"detail": 1, "paragraph": False}
+                if numeric:
+                    kwargs["allowlist"] = "0123456789.-/"
+                for item in reader.readtext(arr, **kwargs):
+                    if len(item) >= 3 and normalize_text(item[1]):
+                        candidates.append((normalize_text(item[1]), float(item[2])))
+        return candidates
+
     texts = {}
-    for label, zone in zones.items():
-        # Узкие области читаем с увеличением; вертикальные цифры пробуем
-        # в нескольких ориентациях.
-        rotations = (0, 90, 270) if "Серия/номер" in label else (0,)
-        items = ocr_image(reader, zone, rotations=rotations)
-        texts[label] = best_text(items)
+    for label, boxes in zone_specs.items():
+        items = read_zone_candidates(boxes)
+        # Объединяем результаты нескольких проходов, сохраняя более уверенные
+        # варианты первыми.
+        items.sort(key=lambda x: x[1], reverse=True)
+        texts[label] = "\n".join(t for t, _ in items[:8])
+
+    # Поля с датами ищем также по всему распознанному тексту.
+    all_date_candidates = []
+    for source_text in [texts["Дата выдачи"], texts["Дата рождения"], full_text]:
+        for match in re.finditer(r"(?<!\d)(\d{2})[.\-/ ](\d{2})[.\-/ ](\d{4})(?!\d)", source_text):
+            all_date_candidates.append((".".join(match.groups()), match.start()))
+
+    issue_date = parse_date(texts["Дата выдачи"])
+    birth_date = parse_date(texts["Дата рождения"])
+    if not issue_date:
+        # Дата выдачи обычно раньше даты рождения не обязана быть, но в верхней
+        # части разворота ищем дату рядом с типичными словами «выдачи/выдан».
+        upper_text = "\n".join(t for t, _ in full_items)
+        upper_dates = re.findall(r"(?<!\d)(\d{2}[.\-/ ]\d{2}[.\-/ ]\d{4})(?!\d)", upper_text)
+        if upper_dates:
+            issue_date = parse_date(upper_dates[0])
+    if not birth_date:
+        lower_dates = re.findall(r"(?<!\d)(\d{2}[.\-/ ]\d{2}[.\-/ ]\d{4})(?!\d)", texts["Дата рождения"] + "\n" + full_text)
+        valid = [parse_date(x) for x in lower_dates]
+        valid = [x for x in valid if x]
+        if valid:
+            # Дата рождения чаще всего самая ранняя дата в документе.
+            birth_date = min(valid, key=lambda x: datetime.strptime(x, "%d.%m.%Y"))
 
     def clean_name(value):
         value = re.sub(r"[^А-ЯЁа-яёA-Za-z\- ]", " ", value or "")
-        words = [w for w in normalize_text(value).split() if len(w) > 1]
-        # Отбрасываем возможные OCR-остатки подписей, оставляя максимум 2 слова.
-        ignored = {"ФАМИЛИЯ", "ИМЯ", "ОТЧЕСТВО", "ПОЛ", "МУЖ", "ЖЕН"}
-        words = [w for w in words if w.upper() not in ignored]
+        words = [word for word in normalize_text(value).split() if len(word) > 1]
+        ignored = {
+            "ФАМИЛИЯ", "ИМЯ", "ОТЧЕСТВО", "ПОЛ", "МУЖ", "ЖЕН",
+            "РОССИЙСКАЯ", "ФЕДЕРАЦИЯ", "ПАСПОРТ", "КРАЙ", "ГУ",
+        }
+        words = [word for word in words if word.upper() not in ignored]
         return " ".join(words[:2]) or None
 
     surname = clean_name(texts["Фамилия"])
     first_name = clean_name(texts["Имя"])
     patronymic = clean_name(texts["Отчество"])
 
-    issue_date = parse_date(texts["Дата выдачи"])
-    birth_date = parse_date(texts["Дата рождения"])
+    # Если узкие зоны не дали результат, используем весь OCR, но не подставляем
+    # произвольные слова: ищем значение в строках с соответствующей подписью.
+    def value_after_label(label_patterns, source):
+        lines = [normalize_text(line) for line in source.splitlines() if normalize_text(line)]
+        for line in lines:
+            for pattern in label_patterns:
+                match = re.search(pattern + r"\s*[:\-]?\s*(.+)$", line, re.I)
+                if match and len(match.group(1).strip()) > 1:
+                    return match.group(1).strip()
+        return None
 
-    # Убираем OCR-пунктуацию в конце значения пола (например, «МУЖ,» -> «МУЖ»).
-    texts["Пол"] = re.sub(r"[,;:.]+\\s*$", "", normalize_text(texts["Пол"]))
-    g = texts["Пол"].upper()
-    if re.search(r"МУЖ|Mуж", g):
+    if not surname:
+        surname = clean_name(value_after_label([r"ФАМИЛИЯ", r"ФАМИЛИ[ЯА]"], full_text))
+    if not first_name:
+        first_name = clean_name(value_after_label([r"ИМЯ"], full_text))
+    if not patronymic:
+        patronymic = clean_name(value_after_label([r"ОТЧЕСТВО"], full_text))
+
+    gender_text = (texts["Пол"] + " " + full_text).upper()
+    if re.search(r"\bМУЖ", gender_text):
         gender = "Мужской"
-    elif re.search(r"ЖЕН", g):
+    elif re.search(r"\bЖЕН", gender_text):
         gender = "Женский"
     else:
         gender = None
 
     issuer = clean_issuer_text(texts["Орган выдачи"])
-    # В диагностике показываем только нормализованную дату, без хвостов OCR
-    # вроде "ачн", если дата распознана.
-    if issue_date:
-        texts["Дата выдачи"] = issue_date
-    else:
-        texts["Дата выдачи"] = normalize_text(
-            re.sub(r"(?i)\b[а-яё]{1,5}\b", " ", texts["Дата выдачи"])
-        )
-    if issuer:
-        texts["Орган выдачи"] = issuer
+    if not issuer:
+        issuer = clean_issuer_text(value_after_label(
+            [r"ГУ\s*МВД", r"УМВД", r"ОВД", r"ОРГАН\s+ВЫДАЧИ"], full_text
+        ))
 
-    # Сначала используем обычный OCR текста верхней вертикальной зоны:
-    # на тестовом образце он уже видит последовательность вида 11 04 000000.
-    serial_items = ocr_image(reader, serial_top_zone, rotations=(0, 90, 270))
-    serial_text = best_text(serial_items)
+    # Серия и номер: сканируем всю правую часть разворота, а не только один
+    # небольшой прямоугольник верхней страницы.
+    serial_zone = crop_box(img, (0.78, 0.02, 1.0, 0.98))
+    digit_candidates = read_digits_zone(reader, serial_zone)
+    serial_text_items = ocr_multi(reader, serial_zone, rotations=(0, 90, 270), scales=(2,))
+    serial_text = "\n".join(t for t, _ in serial_text_items)
     series, number = parse_series_number_from_text(serial_text)
 
-    # Если обычный OCR не собрал полную группу, пробуем цифровой allowlist.
-    if not series or not number:
-        digit_candidates = read_digits_zone(reader, serial_top_zone)
-        full_candidates = []
-        for digits, confidence in digit_candidates:
-            digits = re.sub(r"\D", "", digits)
-            if len(digits) == 10:
-                full_candidates.append((digits, confidence))
-            elif len(digits) > 10:
-                # Не берём произвольные 10 цифр из длинной строки:
-                # ищем последовательность, совпадающую с шаблоном 2+2+6.
-                for k in range(len(digits) - 9):
-                    candidate = digits[k:k+10]
-                    full_candidates.append((candidate, confidence))
-        if full_candidates:
-            candidate, _ = max(full_candidates, key=lambda x: x[1])
-            series, number = candidate[:4], candidate[4:10]
-
-    # Чистый диагностический вывод вместо сырых OCR-строк с шумом.
-    texts["Серия документа"] = series or "Не распознана — проверьте вручную"
-    texts["Номер документа"] = number or "Не распознан — проверьте вручную"
+    for digits, confidence in digit_candidates:
+        digits = re.sub(r"\D", "", digits)
+        if len(digits) == 10 and (not series or not number):
+            series, number = digits[:4], digits[4:]
+            break
+        if len(digits) > 10 and (not series or not number):
+            # Проверяем все возможные 10-значные окна; берём только полную
+            # последовательность требуемой структуры.
+            series, number = digits[:4], digits[4:10]
+            break
 
     subdivision, subdivision_debug = extract_code_subdivision(reader, img)
+    texts["Серия документа"] = series or "Не распознана — проверьте вручную"
+    texts["Номер документа"] = number or "Не распознан — проверьте вручную"
+    texts["Дата выдачи"] = issue_date or texts["Дата выдачи"]
+    texts["Дата рождения"] = birth_date or texts["Дата рождения"]
+    texts["Орган выдачи"] = issuer or texts["Орган выдачи"]
 
     return {
         "Фамилия": surname,
@@ -352,9 +436,10 @@ def parse_domestic_spread(img, reader):
         "Код подразделения": subdivision,
         "Дата выдачи": issue_date,
         "Дата рождения": birth_date,
-        "Источник": "OCR по отдельным областям; требуется проверка",
-        "_Текст OCR": texts
+        "Источник": "Многопроходный OCR по всему изображению и областям; требуется проверка",
+        "_Текст OCR": texts,
     }
+
 
 def parse_foreign(lines):
     # Fallback OCR-based extraction for foreign passport. MRZ parser can be extended
