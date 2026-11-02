@@ -6,7 +6,7 @@
 Фамилия, имя, отчество, пол, серия, номер, орган выдачи, код подразделения, дата выдачи, дата рождения; для загранпаспорта — дата окончания действия.
 
 ## Технологии
-Python, Streamlit, EasyOCR, PyMuPDF, Pillow, NumPy, Pandas.
+Python, Streamlit, EasyOCR, PyMuPDF, Pillow, NumPy
 
 ## Запуск
 Переходим по ссылке: https://contract-data-extractor-gbmhymupmm6aubmdbaw9f2.streamlit.app
